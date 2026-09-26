@@ -1187,5 +1187,8 @@ msgstr "Задержка повторной проверки Zapret (сек)"
 msgid "Zapret ready (%s)"
 msgstr "Zapret готов (%s)"
 
+msgid "Zapret integration active"
+msgstr "Интеграция с Zapret активна"
+
 msgid "Zapret status"
 msgstr "Статус Zapret"

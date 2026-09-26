@@ -137,18 +137,32 @@ function createAutoLearnContent(section) {
   o.default = "500";
   o.depends("enabled", "1");
 
-  o = section.option(form.DummyValue, "_zapret_status", _("Zapret status"));
-  o.rawhtml = true;
-  o.cfgvalue = function () {
-    return fetchAutoLearnJson(["zapret-status"]).then(function (data) {
-      if (!data || !data.installed) {
-        return _("Zapret not detected");
+  o = section.option(form.DummyValue, "_zapret_status", "");
+  o.depends("enabled", "1");
+  o.depends("zapret_enabled", "1");
+  o.render = function () {
+    const frame = E("div", { class: "ns-zapret-status" });
+
+    fetchAutoLearnJson(["zapret-status"]).then(function (data) {
+      if (!data || !data.installed || !data.api) {
+        return;
       }
-      if (!data.api) {
-        return _("Zapret installed, 90-script API missing");
-      }
-      return _("Zapret ready (%s)").format(data.script || "");
+
+      frame.appendChild(
+        E(
+          "span",
+          {
+            class: "ns-zapret-status__ok",
+            style:
+              "color: var(--success-color-medium, #28a745); font-size: 1.25em; font-weight: 600;",
+            title: _("Zapret integration active"),
+          },
+          "✔",
+        ),
+      );
     });
+
+    return frame;
   };
 
   o = section.option(form.DummyValue, "_domain_list", _("Detected domains"));
