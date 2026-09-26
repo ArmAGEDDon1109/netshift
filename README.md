@@ -9,6 +9,9 @@
   <a href="https://github.com/ArmAGEDDon1109/netshift-extended/actions">
     <img src="https://img.shields.io/github/actions/workflow/status/ArmAGEDDon1109/netshift-extended/ci-main.yml?branch=main&label=CI">
   </a>
+  <a href="https://github.com/ArmAGEDDon1109/netshift-extended/actions/workflows/build-packages.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/ArmAGEDDon1109/netshift-extended/build-packages.yml?branch=main&label=Build%20OWRT%2024%2F25">
+  </a>
 </p>
 <h3 align="center"><a href="https://github.com/sagernet/sing-box">Sing-box</a> client for OpenWrt — extended fork</h3>
 </div>
@@ -296,7 +299,10 @@ uci commit netshift
 
 ## Build Artifacts
 
-Пакеты собираются в Docker-образах OpenWrt SDK (`.ipk` - 24.10, `.apk` - 25.12) и публикуются как релиз при push git-тега ([`.github/workflows/build.yml`](.github/workflows/build.yml)).
+Пакеты собираются в Docker-образах OpenWrt SDK (`.ipk` — OpenWrt 24.10, `.apk` — OpenWrt 25.12):
+
+- **CI на `main`:** [`.github/workflows/build-packages.yml`](.github/workflows/build-packages.yml) — артефакты `openwrt-24.10-ipk-*` и `openwrt-25.12-apk-*` в Actions после каждого push.
+- **Релиз:** [`.github/workflows/build.yml`](.github/workflows/build.yml) — GitHub Release при push git-тега.
 
 | Пакет | Формат | Назначение |
 |---|---|---|

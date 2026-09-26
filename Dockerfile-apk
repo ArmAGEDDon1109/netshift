@@ -6,6 +6,8 @@ ENV NETSHIFT_VERSION=${NETSHIFT_VERSION}
 COPY ./netshift /builder/package/feeds/utilities/netshift
 COPY ./luci-app-netshift /builder/package/feeds/luci/luci-app-netshift
 
-RUN make defconfig && \
+# apk treats '-' in the upstream version as the release separator; sanitize CI/tag versions.
+RUN export NETSHIFT_VERSION="$(echo "${NETSHIFT_VERSION}" | tr '-' '_')" && \
+    make defconfig && \
     make package/netshift/compile -j4 V=s && \
     make package/luci-app-netshift/compile -j4 V=s
