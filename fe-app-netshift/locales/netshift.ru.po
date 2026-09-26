@@ -65,6 +65,54 @@ msgstr "Необходимо указать хотя бы один действ�
 msgid "At least one valid subnet or IP must be specified. Comments-only content is not allowed."
 msgstr "Необходимо указать хотя бы одну действительную подсеть или IP. Только комментарии недопустимы."
 
+msgid "Auto-detection"
+msgstr "Автоопределение"
+
+msgid "Enable auto-detection"
+msgstr "Включить автоопределение"
+
+msgid "Detect blocked or geo-blocked sites. Domains are stored outside UCI to avoid restarts on each add."
+msgstr "Определять заблокированные и geo-blocked сайты. Домены хранятся вне UCI, чтобы не перезапускать сервис при каждом добавлении."
+
+msgid "Target NetShift section"
+msgstr "Целевая секция NetShift"
+
+msgid "Route auto-learned domains through this proxy/VPN section."
+msgstr "Направлять автоопределённые домены через эту proxy/VPN-секцию."
+
+msgid "Integrate with Zapret"
+msgstr "Интеграция с Zapret"
+
+msgid "When enabled and saved, NetShift copies 90-script.sh to /opt/zapret/init.d/openwrt/custom.d/90-script.sh and reloads Zapret. On a failed direct probe, the domain is added to the Zapret exclude list first; if still blocked, it is routed through NetShift."
+msgstr "При включении и сохранении NetShift копирует 90-script.sh в /opt/zapret/init.d/openwrt/custom.d/90-script.sh и перезапускает Zapret. Если сайт недоступен напрямую — сначала добавляется в exclude Zapret; если всё ещё заблокирован — маршрутизируется через NetShift."
+
+msgid "Zapret re-probe delay (sec)"
+msgstr "Задержка повторной проверки Zapret (сек)"
+
+msgid "Max auto-learned domains"
+msgstr "Макс. автоопределённых доменов"
+
+msgid "Zapret status"
+msgstr "Статус Zapret"
+
+msgid "Zapret not detected"
+msgstr "Zapret не обнаружен"
+
+msgid "Zapret installed, 90-script API missing"
+msgstr "Zapret установлен, API 90-script отсутствует"
+
+msgid "Zapret ready (%s)"
+msgstr "Zapret готов (%s)"
+
+msgid "Detected domains"
+msgstr "Обнаруженные домены"
+
+msgid "No auto-detected domains yet."
+msgstr "Автоопределённых доменов пока нет."
+
+msgid "Zapret 90-script deployed to /opt/zapret/init.d/openwrt/custom.d/ and Zapret was reloaded."
+msgstr "90-script.sh установлен в /opt/zapret/init.d/openwrt/custom.d/, Zapret перезапущен."
+
 msgid "Auto"
 msgstr "Авто"
 
