@@ -75,30 +75,28 @@ jobs:
           set -euo pipefail
           PKG_FMT="${{ matrix.package_type }}"
           VERSION="${{ needs.preparation.outputs.version }}"
-          mkdir -p "./staging/${PKG_FMT}/utilities" "./staging/${PKG_FMT}/luci" "./bin/${PKG_FMT}"
-          docker cp "${PKG_FMT}:/builder/bin/packages/x86_64/utilities/." "./staging/${PKG_FMT}/utilities/" || true
-          docker cp "${PKG_FMT}:/builder/bin/packages/x86_64/luci/." "./staging/${PKG_FMT}/luci/" || true
+          mkdir -p "./bin/${PKG_FMT}"
 
-          copy_one() {
-            local pattern="$1"
-            local matches
-            matches="$(find "./staging/${PKG_FMT}" -maxdepth 2 -name "${pattern}" | sort)"
-            if [ -z "$matches" ]; then
-              echo "Missing package matching: ${pattern}" >&2
-              find "./staging/${PKG_FMT}" -maxdepth 2 -type f -name "*netshift*" -ls >&2 || true
+          pick_pkg() {
+            local glob="$1"
+            local path
+            path="$(docker exec "${PKG_FMT}" sh -c "ls -1 ${glob} 2>/dev/null | sort | tail -n 1")"
+            if [ -z "$path" ]; then
+              echo "Missing package: ${glob}" >&2
+              docker exec "${PKG_FMT}" find /builder/bin/packages/x86_64 -maxdepth 2 -name '*netshift*' -ls >&2 || true
               exit 1
             fi
-            echo "$matches" | tail -n 1 | xargs -I{} cp "{}" "./bin/${PKG_FMT}/"
+            docker cp "${PKG_FMT}:${path}" "./bin/${PKG_FMT}/"
           }
 
           if [ "$PKG_FMT" = "ipk" ]; then
-            copy_one "netshift_${VERSION}*.ipk"
-            copy_one "luci-app-netshift_${VERSION}*.ipk"
-            copy_one "luci-i18n-netshift-ru_*.ipk"
+            pick_pkg "/builder/bin/packages/x86_64/utilities/netshift_${VERSION}*.ipk"
+            pick_pkg "/builder/bin/packages/x86_64/luci/luci-app-netshift_${VERSION}*.ipk"
+            pick_pkg "/builder/bin/packages/x86_64/luci/luci-i18n-netshift-ru_*.ipk"
           else
-            copy_one "netshift-${VERSION}*.apk"
-            copy_one "luci-app-netshift-${VERSION}*.apk"
-            copy_one "luci-i18n-netshift-ru-*.apk"
+            pick_pkg "/builder/bin/packages/x86_64/utilities/netshift-${VERSION}*.apk"
+            pick_pkg "/builder/bin/packages/x86_64/luci/luci-app-netshift-${VERSION}*.apk"
+            pick_pkg "/builder/bin/packages/x86_64/luci/luci-i18n-netshift-ru-*.apk"
           fi
 
           ls -la "./bin/${PKG_FMT}/"
