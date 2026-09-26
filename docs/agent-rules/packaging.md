@@ -62,11 +62,11 @@ best-effort). It uses the same `PKG_VERSION` expression and
 - Both copy `./netshift` → `feeds/utilities/netshift` and
   `./luci-app-netshift` → `feeds/luci/luci-app-netshift`, then run
   `make defconfig` + `make package/<pkg>/compile`.
-- **apk version rule:** `apk mkpkg` rejects upstream versions containing `-`
-  (it treats `-` as the release separator). `Dockerfile-apk` therefore runs
-  `tr '-' '_'` on `NETSHIFT_VERSION` before `make`. CI uses dot-separated
-  snapshot versions (`0.DDMMYYYY.<sha>`); release tags should avoid dashes in
-  the upstream part (e.g. prefer `0.9.7rc1` over `0.9.7-rc1`).
+- **apk version rule:** `apk mkpkg` rejects upstream versions with extra `-`
+  (release separator) or extra `.` segments. `Dockerfile-apk` runs
+  `tr '-' '_'` on `NETSHIFT_VERSION` before `make`. CI snapshot versions use a
+  single semver dot (`0.DDMMYYYY<sha>`); release tags should stay simple
+  (e.g. `0.9.7`, not `0.9.7-rc1`).
 - `sdk/Dockerfile-sdk-ipk` (`FROM openwrt/sdk:x86_64-v24.10.6`) and
   `sdk/Dockerfile-sdk-apk` (`FROM openwrt/sdk:x86_64-v25.12.3`) are the **base
   SDK images** that the `itdoginfo/openwrt-sdk-*` images derive from (feeds
