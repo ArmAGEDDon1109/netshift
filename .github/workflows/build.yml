@@ -94,11 +94,11 @@ jobs:
           if [ "$PKG_FMT" = "ipk" ]; then
             copy_one "netshift_${VERSION}*.ipk"
             copy_one "luci-app-netshift_${VERSION}*.ipk"
-            copy_one "luci-i18n-netshift-ru_${VERSION}*.ipk"
+            copy_one "luci-i18n-netshift-ru_*.ipk"
           else
             copy_one "netshift-${VERSION}*.apk"
             copy_one "luci-app-netshift-${VERSION}*.apk"
-            copy_one "luci-i18n-netshift-ru-${VERSION}*.apk"
+            copy_one "luci-i18n-netshift-ru-*.apk"
           fi
 
           ls -la "./bin/${PKG_FMT}/"
@@ -109,7 +109,7 @@ jobs:
         if: matrix.package_type == 'ipk'
         shell: bash
         run: |
-          for f in ./bin/ipk/netshift-*.ipk ./bin/ipk/luci-app-netshift-*.ipk ./bin/ipk/luci-i18n-netshift-ru-*.ipk; do
+          for f in ./bin/ipk/netshift-*.ipk ./bin/ipk/luci-app-netshift-*.ipk ./bin/ipk/luci-i18n-netshift-ru*.ipk; do
             [ -e "$f" ] || continue
             base=$(basename "$f")
             newname=$(echo "$base" | sed 's/_/-/g')
@@ -124,7 +124,7 @@ jobs:
           VERSION="${{ needs.preparation.outputs.version }}"
 
           mkdir -p ./filtered-bin/${{ matrix.package_type }}
-          cp ./bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-*.${{ matrix.package_type }} "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${{ matrix.package_type }}"
+          cp ./bin/${{ matrix.package_type }}/luci-i18n-netshift-ru*.${{ matrix.package_type }} ./filtered-bin/${{ matrix.package_type }}/
           cp ./bin/${{ matrix.package_type }}/netshift-*.${{ matrix.package_type }} ./filtered-bin/${{ matrix.package_type }}/
           cp ./bin/${{ matrix.package_type }}/luci-app-netshift-*.${{ matrix.package_type }} ./filtered-bin/${{ matrix.package_type }}/
 
