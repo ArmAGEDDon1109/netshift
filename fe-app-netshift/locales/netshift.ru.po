@@ -1,15 +1,15 @@
 # RU translations for NETSHIFT package.
 # Copyright (C) 2026 THE NETSHIFT'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the NETSHIFT package.
-# yandexru45, 2026.
+# mobil1, 2026.
 #
 msgid ""
 msgstr ""
 "Project-Id-Version: NETSHIFT\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-13 14:14+0300\n"
-"PO-Revision-Date: 2026-06-13 14:14+0300\n"
-"Last-Translator: yandexru45\n"
+"POT-Creation-Date: 2026-09-26 23:50+0300\n"
+"PO-Revision-Date: 2026-09-26 23:50+0300\n"
+"Last-Translator: mobil1\n"
 "Language-Team: none\n"
 "Language: ru\n"
 "MIME-Version: 1.0\n"
@@ -28,6 +28,9 @@ msgstr "✘ Отключено"
 
 msgid "✘ Stopped"
 msgstr "✘ Остановлен"
+
+msgid "Actions"
+msgstr "Действия"
 
 msgid "Active Connections"
 msgstr "Активные соединения"
@@ -65,56 +68,11 @@ msgstr "Необходимо указать хотя бы один действ�
 msgid "At least one valid subnet or IP must be specified. Comments-only content is not allowed."
 msgstr "Необходимо указать хотя бы одну действительную подсеть или IP. Только комментарии недопустимы."
 
-msgid "Auto-detection"
-msgstr "Автоопределение"
-
-msgid "Enable auto-detection"
-msgstr "Включить автоопределение"
-
-msgid "Detect blocked or geo-blocked sites. Domains are stored outside UCI to avoid restarts on each add."
-msgstr "Определять заблокированные и geo-blocked сайты. Домены хранятся вне UCI, чтобы не перезапускать сервис при каждом добавлении."
-
-msgid "Target NetShift section"
-msgstr "Целевая секция NetShift"
-
-msgid "Route auto-learned domains through this proxy/VPN section."
-msgstr "Направлять автоопределённые домены через эту proxy/VPN-секцию."
-
-msgid "Integrate with Zapret"
-msgstr "Интеграция с Zapret"
-
-msgid "When enabled and saved, NetShift copies 90-script.sh to /opt/zapret/init.d/openwrt/custom.d/90-script.sh and reloads Zapret. On a failed direct probe, the domain is added to the Zapret exclude list first; if still blocked, it is routed through NetShift."
-msgstr "При включении и сохранении NetShift копирует 90-script.sh в /opt/zapret/init.d/openwrt/custom.d/90-script.sh и перезапускает Zapret. Если сайт недоступен напрямую — сначала добавляется в exclude Zapret; если всё ещё заблокирован — маршрутизируется через NetShift."
-
-msgid "Zapret re-probe delay (sec)"
-msgstr "Задержка повторной проверки Zapret (сек)"
-
-msgid "Max auto-learned domains"
-msgstr "Макс. автоопределённых доменов"
-
-msgid "Zapret status"
-msgstr "Статус Zapret"
-
-msgid "Zapret not detected"
-msgstr "Zapret не обнаружен"
-
-msgid "Zapret installed, 90-script API missing"
-msgstr "Zapret установлен, API 90-script отсутствует"
-
-msgid "Zapret ready (%s)"
-msgstr "Zapret готов (%s)"
-
-msgid "Detected domains"
-msgstr "Обнаруженные домены"
-
-msgid "No auto-detected domains yet."
-msgstr "Автоопределённых доменов пока нет."
-
-msgid "Zapret 90-script deployed to /opt/zapret/init.d/openwrt/custom.d/ and Zapret was reloaded."
-msgstr "90-script.sh установлен в /opt/zapret/init.d/openwrt/custom.d/, Zapret перезапущен."
-
 msgid "Auto"
 msgstr "Авто"
+
+msgid "Auto-detection"
+msgstr "Автоопределение"
 
 msgid "Available actions"
 msgstr "Доступные действия"
@@ -170,8 +128,14 @@ msgstr "Проверки пройдены"
 msgid "CIDR must be between 0 and 32"
 msgstr "CIDR должен быть между 0 и 32"
 
+msgid "Clear NetShift list"
+msgstr "Очистить список NetShift"
+
 msgid "Clear subscription cache"
 msgstr "Очистить кеш подписок"
+
+msgid "Cleared NetShift auto-learn list"
+msgstr "Список автоопределения NetShift очищен"
 
 msgid "Clearing subscription cache and re-downloading… this may take a minute"
 msgstr "Очистка кеша подписок и повторная загрузка… это может занять минуту"
@@ -188,8 +152,8 @@ msgstr "Менеджер компонентов"
 msgid "Config File Path"
 msgstr "Путь к файлу конфигурации"
 
-msgid "Configuration for NetShift service"
-msgstr "Конфигурация службы NetShift"
+msgid "Configuration for NetShift Extended service"
+msgstr "Конфигурация службы NetShift Extended"
 
 msgid "Configuration Type"
 msgstr "Тип конфигурации"
@@ -236,6 +200,12 @@ msgstr "Задержка в миллисекундах перед перезаг
 msgid "Delay value cannot be empty"
 msgstr "Значение задержки не может быть пустым"
 
+msgid "Detect blocked or geo-blocked sites. Domains are stored outside UCI to avoid restarts on each add."
+msgstr "Определять заблокированные и geo-заблокированные сайты. Домены хранятся вне UCI, чтобы не перезапускать сервис при каждом добавлении."
+
+msgid "Detected domains"
+msgstr "Обнаруженные домены"
+
 msgid "Dev"
 msgstr "Dev"
 
@@ -266,14 +236,11 @@ msgstr "DNS"
 msgid "DNS on router"
 msgstr "DNS на роутере"
 
-msgid "DNS Output Interface"
-msgstr "Интерфейс исходящего DNS"
-
-msgid "Optional: network interface for upstream DNS egress. Leave empty to auto-detect (LAN interface when DNS server is a private IP such as AdGuard on 192.168.x.x)."
-msgstr "Необязательно: сетевой интерфейс для исходящих DNS-запросов к upstream. Оставьте пустым для автоопределения (интерфейс LAN, если DNS-сервер — приватный IP, например AdGuard на 192.168.x.x)."
-
 msgid "DNS outbound section"
 msgstr "Секция outbound для DNS"
+
+msgid "DNS Output Interface"
+msgstr "Интерфейс исходящего DNS"
 
 msgid "DNS over HTTPS (DoH)"
 msgstr "DNS через HTTPS (DoH)"
@@ -295,6 +262,9 @@ msgstr "Адрес DNS-сервера не может быть пустым"
 
 msgid "Do not panic, everything can be fixed, just..."
 msgstr "Не паникуйте, всё можно исправить, просто..."
+
+msgid "Domain"
+msgstr "Домен"
 
 msgid "Domain and subnet lists that decide which traffic uses this section"
 msgstr "Списки доменов и подсетей, определяющие, какой трафик идёт через эту секцию"
@@ -326,6 +296,9 @@ msgstr "Исключать серверы подписки, имя которы�
 msgid "Dynamic List"
 msgstr "Динамический список"
 
+msgid "Enable auto-detection"
+msgstr "Включить автоопределение"
+
 msgid "Enable autostart"
 msgstr "Включить автостарт"
 
@@ -355,6 +328,9 @@ msgstr "Включить YACD"
 
 msgid "Enable YACD WAN Access"
 msgstr "Включить доступ YACD WAN"
+
+msgid "Enter a domain to probe"
+msgstr "Введите домен для проверки"
 
 msgid "Enter complete outbound configuration in JSON format"
 msgstr "Введите полную конфигурацию исходящего соединения в формате JSON"
@@ -448,6 +424,9 @@ msgstr "Установить %s"
 
 msgid "Installed version is newer than release"
 msgstr "Установленная версия новее релиза"
+
+msgid "Integrate with Zapret"
+msgstr "Интеграция с Zapret"
 
 msgid "Interface Monitoring"
 msgstr "Мониторинг интерфейса"
@@ -656,6 +635,12 @@ msgstr "Основной DNS"
 msgid "Main DNS via outbound"
 msgstr "Основной DNS через outbound"
 
+msgid "Manual probe"
+msgstr "Ручная проверка"
+
+msgid "Max auto-learned domains"
+msgstr "Макс. автоопределённых доменов"
+
 msgid "Memory Usage"
 msgstr "Использование памяти"
 
@@ -677,14 +662,8 @@ msgstr "NetShift"
 msgid "NetShift Extended"
 msgstr "NetShift Extended"
 
-msgid "NetShift Settings"
-msgstr "Настройки NetShift"
-
 msgid "NetShift Extended Settings"
 msgstr "Настройки NetShift Extended"
-
-msgid "Configuration for NetShift Extended service"
-msgstr "Конфигурация службы NetShift Extended"
 
 msgid "NetShift updated, version:"
 msgstr "NetShift обновлён, версия:"
@@ -697,6 +676,9 @@ msgstr "Сеть"
 
 msgid "Network Interface"
 msgstr "Сетевой интерфейс"
+
+msgid "No auto-detected domains yet."
+msgstr "Автоопределённых доменов пока нет."
 
 msgid "No other marking rules found"
 msgstr "Другие правила маркировки не найдены"
@@ -724,6 +706,9 @@ msgstr "Только одна секция может быть глобальн�
 
 msgid "Operation timed out"
 msgstr "Время ожидания истекло"
+
+msgid "Optional: network interface for upstream DNS egress. Leave empty to auto-detect (LAN interface when DNS server is a private IP such as AdGuard on 192.168.x.x)."
+msgstr "Необязательно: сетевой интерфейс для исходящих DNS-запросов к upstream. Оставьте пустым для автоопределения (интерфейс LAN, если DNS-сервер — приватный IP, например AdGuard на 192.168.x.x)."
 
 msgid "Outbound Config"
 msgstr "Конфигурация Outbound"
@@ -755,6 +740,9 @@ msgstr "Ожидает запуска"
 msgid "Prefix length"
 msgstr "Длина префикса"
 
+msgid "Probe"
+msgstr "Проверить"
+
 msgid "Protocol toggles, file paths and logging. Block DoH only after switching upstream DNS to UDP or DoT."
 msgstr "Переключатели протоколов, пути к файлам и журналирование. Включайте блокировку DoH только после переключения вышестоящего DNS на UDP или DoT."
 
@@ -767,6 +755,12 @@ msgstr "Прокси-трафик не маршрутизируется чере
 msgid "Proxy traffic is routed via FakeIP"
 msgstr "Прокси-трафик направляется через FakeIP"
 
+msgid "Reason"
+msgstr "Причина"
+
+msgid "Refresh"
+msgstr "Обновить"
+
 msgid "Regional options cannot be used together"
 msgstr "Нельзя использовать несколько региональных опций одновременно"
 
@@ -776,6 +770,12 @@ msgstr "Внешние списки доменов"
 msgid "Remote Subnet Lists"
 msgstr "Внешние списки подсетей"
 
+msgid "Remove"
+msgstr "Удалить"
+
+msgid "Removed domain: %s"
+msgstr "Домен удалён: %s"
+
 msgid "Resolve real IP for routing"
 msgstr "Разрешение реальных IP-адресов"
 
@@ -784,6 +784,9 @@ msgstr "Перезапустить NetShift"
 
 msgid "Route all unmatched traffic through this section's outbound."
 msgstr "Направлять весь несовпавший трафик через outbound этой секции."
+
+msgid "Route auto-learned domains through this proxy/VPN section."
+msgstr "Направлять автоопределённые домены через эту proxy/VPN-секцию."
 
 msgid "Route main DNS through proxy/VPN"
 msgstr "Основной DNS через прокси/VPN"
@@ -941,6 +944,9 @@ msgstr "Укажите URL-адреса для загрузки и исполь�
 msgid "Specify the path to the list file located on the router filesystem"
 msgstr "Укажите путь к файлу списка, расположенному в файловой системе маршрутизатора."
 
+msgid "Stage"
+msgstr "Стадия"
+
 msgid "Start NetShift"
 msgstr "Запустить NetShift"
 
@@ -988,6 +994,9 @@ msgstr "Системная информация"
 
 msgid "Table exist"
 msgstr "Таблица существует"
+
+msgid "Target NetShift section"
+msgstr "Целевая секция NetShift"
 
 msgid "Test latency"
 msgstr "Тестирование задержки"
@@ -1048,6 +1057,9 @@ msgstr "Доступно обновление"
 
 msgid "Update NetShift"
 msgstr "Обновить NetShift"
+
+msgid "Updated"
+msgstr "Обновлено"
 
 msgid "Updating NetShift, this may take a few minutes; the page will reload…"
 msgstr "Обновление NetShift, это может занять несколько минут; страница перезагрузится…"
@@ -1133,6 +1145,9 @@ msgstr "Предупреждение: %s нельзя использовать �
 msgid "Warning: Russia inside can only be used with %s. %s already in Russia inside and have been removed from selection."
 msgstr "Предупреждение: Russia inside может быть использован только с %s. %s уже есть в Russia inside и будет удален из выбранных."
 
+msgid "When enabled and saved, NetShift copies 90-script.sh to /opt/zapret/init.d/openwrt/custom.d/90-script.sh and reloads Zapret. On a failed direct probe, the domain is added to the Zapret exclude list first; if still blocked, it is routed through NetShift."
+msgstr "При включении и сохранении NetShift копирует 90-script.sh в /opt/zapret/init.d/openwrt/custom.d/90-script.sh и перезапускает Zapret. Если сайт недоступен напрямую — сначала добавляется в exclude Zapret; если всё ещё заблокирован — маршрутизируется через NetShift."
+
 msgid "When enabled, traffic not matching any other section's lists will go through this proxy."
 msgstr "Когда включено, трафик, не совпадающий со списками других секций, будет идти через этот прокси."
 
@@ -1153,3 +1168,24 @@ msgstr "Доступ к веб-панели YACD и защита удалённ�
 
 msgid "You can select Output Network Interface, by default autodetect"
 msgstr "Вы можете выбрать выходной сетевой интерфейс, по умолчанию он определяется автоматически."
+
+msgid "Zapret 90-script deployed to /opt/zapret/init.d/openwrt/custom.d/ and Zapret was reloaded."
+msgstr "90-script.sh установлен в /opt/zapret/init.d/openwrt/custom.d/, Zapret перезапущен."
+
+msgid "Zapret deploy failed"
+msgstr "Не удалось установить скрипт Zapret"
+
+msgid "Zapret installed, 90-script API missing"
+msgstr "Zapret установлен, API 90-script отсутствует"
+
+msgid "Zapret not detected"
+msgstr "Zapret не обнаружен"
+
+msgid "Zapret re-probe delay (sec)"
+msgstr "Задержка повторной проверки Zapret (сек)"
+
+msgid "Zapret ready (%s)"
+msgstr "Zapret готов (%s)"
+
+msgid "Zapret status"
+msgstr "Статус Zapret"
