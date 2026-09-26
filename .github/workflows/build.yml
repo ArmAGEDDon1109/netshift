@@ -45,6 +45,7 @@ jobs:
       - preparation
       - smoke-tests
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { package_type: ipk }
@@ -60,28 +61,35 @@ jobs:
           file: ./Dockerfile-${{ matrix.package_type }}
           context: .
           tags: netshift:ci-${{ matrix.package_type }}
+          load: true
           build-args: |
             NETSHIFT_VERSION=${{ needs.preparation.outputs.version }}
 
       - name: Create ${{ matrix.package_type }} Docker container
         run: docker create --name ${{ matrix.package_type }} netshift:ci-${{ matrix.package_type }}
 
-      - name: Copy files from ${{ matrix.package_type }} Docker container
+      - name: Copy NetShift packages from ${{ matrix.package_type }} Docker container
         run: |
-          mkdir -p ./bin/${{ matrix.package_type }}
-          docker cp ${{ matrix.package_type }}:/builder/bin/packages/x86_64/utilities/. ./bin/${{ matrix.package_type }}/
-          docker cp ${{ matrix.package_type }}:/builder/bin/packages/x86_64/luci/. ./bin/${{ matrix.package_type }}/
+          PKG_FMT="${{ matrix.package_type }}"
+          mkdir -p "./staging/${PKG_FMT}/utilities" "./staging/${PKG_FMT}/luci" "./bin/${PKG_FMT}"
+          docker cp "${PKG_FMT}:/builder/bin/packages/x86_64/utilities/." "./staging/${PKG_FMT}/utilities/" || true
+          docker cp "${PKG_FMT}:/builder/bin/packages/x86_64/luci/." "./staging/${PKG_FMT}/luci/" || true
+          cp "./staging/${PKG_FMT}/utilities/netshift-"*".${PKG_FMT}" "./bin/${PKG_FMT}/" 2>/dev/null || true
+          cp "./staging/${PKG_FMT}/luci/luci-app-netshift-"*".${PKG_FMT}" "./bin/${PKG_FMT}/"
+          cp "./staging/${PKG_FMT}/luci/luci-i18n-netshift-ru-"*".${PKG_FMT}" "./bin/${PKG_FMT}/"
+          ls -la "./bin/${PKG_FMT}/"
 
         # IPK uses underscore `_` in filenames, while APK uses only dash `-`
       - name: Fix naming difference between build for packages (replace _ with -)
         if: matrix.package_type == 'ipk'
         shell: bash
         run: |
-          for f in ./bin/${{ matrix.package_type }}/*.${{ matrix.package_type }}; do
+          for f in ./bin/ipk/netshift-*.ipk ./bin/ipk/luci-app-netshift-*.ipk ./bin/ipk/luci-i18n-netshift-ru-*.ipk; do
             [ -e "$f" ] || continue
             base=$(basename "$f")
             newname=$(echo "$base" | sed 's/_/-/g')
-            mv "$f" "./bin/${{ matrix.package_type }}/$newname"
+            [ "$base" = "$newname" ] && continue
+            mv "$f" "./bin/ipk/$newname"
           done
 
       - name: Filter files
@@ -135,3 +143,10 @@ jobs:
           prerelease: false
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
+          body: |
+            NetShift Extended ${{ github.ref_name }}
+
+            - OpenWrt 24.10 (opkg): `*.ipk`
+            - OpenWrt 25.12 (apk): `*.apk`
+
+            Packages: `netshift`, `luci-app-netshift`, `luci-i18n-netshift-ru`
