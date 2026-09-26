@@ -30,8 +30,8 @@ jobs:
       - uses: actions/checkout@v5.0.0
       - id: version
         run: |
-          # apk allows only one '.' in the upstream version; keep a single semver dot.
-          VERSION="0.$(date +%d%m%Y)${GITHUB_SHA::7}"
+          # apk version must be numeric (one '.'); use date + run number for uniqueness.
+          VERSION="0.$(date +%d%m%Y)${GITHUB_RUN_NUMBER}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   build:
