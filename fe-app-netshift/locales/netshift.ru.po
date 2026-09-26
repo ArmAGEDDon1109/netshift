@@ -218,6 +218,12 @@ msgstr "DNS"
 msgid "DNS on router"
 msgstr "DNS на роутере"
 
+msgid "DNS Output Interface"
+msgstr "Интерфейс исходящего DNS"
+
+msgid "Optional: network interface for upstream DNS egress. Leave empty to auto-detect (LAN interface when DNS server is a private IP such as AdGuard on 192.168.x.x)."
+msgstr "Необязательно: сетевой интерфейс для исходящих DNS-запросов к upstream. Оставьте пустым для автоопределения (интерфейс LAN, если DNS-сервер — приватный IP, например AdGuard на 192.168.x.x)."
+
 msgid "DNS outbound section"
 msgstr "Секция outbound для DNS"
 

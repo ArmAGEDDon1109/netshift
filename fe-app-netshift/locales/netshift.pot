@@ -297,6 +297,14 @@ msgstr ""
 msgid "DNS on router"
 msgstr ""
 
+#: ../luci-app-netshift/htdocs/luci-static/resources/view/netshift/settings.js:103
+msgid "DNS Output Interface"
+msgstr ""
+
+#: ../luci-app-netshift/htdocs/luci-static/resources/view/netshift/settings.js:105
+msgid "Optional: network interface for upstream DNS egress. Leave empty to auto-detect (LAN interface when DNS server is a private IP such as AdGuard on 192.168.x.x)."
+msgstr ""
+
 #: ../luci-app-netshift/htdocs/luci-static/resources/view/netshift/settings.js:116
 msgid "DNS outbound section"
 msgstr ""
