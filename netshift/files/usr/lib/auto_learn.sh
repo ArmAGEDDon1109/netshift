@@ -48,9 +48,18 @@ auto_learn_get_max_domains() {
 
 auto_learn_normalize_domain() {
     local domain="$1"
+    local lower
 
     domain="$(echo "$domain" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    domain="$(echo "$domain" | sed 's/^[Hh][Tt][Tt][Pp][Ss]*://;s/^[Hh][Tt][Tt][Pp]://')"
+    lower="$(echo "$domain" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+        https://*)
+            domain="${lower#https://}"
+            ;;
+        http://*)
+            domain="${lower#http://}"
+            ;;
+    esac
     domain="${domain%%/*}"
     domain="${domain%%:*}"
     echo "$domain"
