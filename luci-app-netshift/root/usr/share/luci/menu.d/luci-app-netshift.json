@@ -1,6 +1,6 @@
 {
   "admin/services/netshift": {
-    "title": "NetShift",
+    "title": "NetShift Extended",
     "order": 42,
     "action": {
       "type": "view",

@@ -865,8 +865,20 @@ msgstr ""
 msgid "NetShift"
 msgstr ""
 
+#: src/netshift/tabs/manager/cards.ts:151
+msgid "NetShift Extended"
+msgstr ""
+
 #: ../luci-app-netshift/htdocs/luci-static/resources/view/netshift/netshift.js:29
 msgid "NetShift Settings"
+msgstr ""
+
+#: ../luci-app-netshift/htdocs/luci-static/resources/view/netshift/netshift.js:29
+msgid "NetShift Extended Settings"
+msgstr ""
+
+#: ../luci-app-netshift/htdocs/luci-static/resources/view/netshift/netshift.js:30
+msgid "Configuration for NetShift Extended service"
 msgstr ""
 
 #: src/netshift/tabs/manager/initController.ts:217

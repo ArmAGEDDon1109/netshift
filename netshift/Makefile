@@ -16,13 +16,15 @@ define Package/netshift
 	CATEGORY:=Network
 	DEPENDS:=+sing-box +curl +jq +kmod-nft-tproxy +coreutils-base64 +bind-dig
 	CONFLICTS:=https-dns-proxy nextdns luci-app-passwall luci-app-passwall2
-	TITLE:=Domain routing app
-	URL:=https://podkop.net
+	TITLE:=NetShift Extended - domain routing
+	URL:=https://github.com/ArmAGEDDon1109/netshift-extended
 	PKGARCH:=all
 endef
 
 define Package/netshift/description
-	Domain routing. Use of VLESS, Shadowsocks technologies
+	NetShift Extended: domain routing via sing-box, local DNS (127.0.0.42),
+	FakeIP, and auto-learn blocked-site detection (Zapret + hot-patch ruleset).
+	VLESS, Shadowsocks, Trojan, Hysteria2, subscriptions.
 endef
 
 define Build/Configure

@@ -29,8 +29,8 @@ const EntryPoint = {
 
     const netshiftMap = new form.Map(
       "netshift",
-      _("NetShift Settings"),
-      _("Configuration for NetShift service"),
+      _("NetShift Extended Settings"),
+      _("Configuration for NetShift Extended service"),
     );
     // Enable tab views
     netshiftMap.tabbed = true;

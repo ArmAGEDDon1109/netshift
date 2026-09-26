@@ -1,6 +1,6 @@
 {
   "luci-app-netshift": {
-    "description": "Grant UCI and RPC access to LuCI app NetShift",
+    "description": "Grant UCI and RPC access to LuCI app NetShift Extended",
     "read": {
       "file": {
         "/etc/init.d/netshift": [

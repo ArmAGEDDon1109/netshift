@@ -5298,7 +5298,7 @@ function netshiftCard(systemInfo, check) {
   }
   return {
     key: "netshift",
-    title: "NetShift",
+    title: _("NetShift Extended"),
     version: normalizeCompiledVersion(systemInfo.netshift_version),
     installed: true,
     tag: getCheckTag(status),

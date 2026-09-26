@@ -1,29 +1,28 @@
 <div align="center">
 
-# NetShift
+# NetShift Extended
 
 <p align="center">
-  <img src="./docs/icon.png" alt="Clash" width="128" />
+  <img src="./docs/icon.png" alt="NetShift Extended" width="128" />
   <br>
   <br>
-  <a href="https://github.com/yandexru45/netshift/releases">
-    <img src="https://img.shields.io/github/release/yandexru45/netshift/all.svg">
+  <a href="https://github.com/ArmAGEDDon1109/netshift-extended/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/ArmAGEDDon1109/netshift-extended/ci-main.yml?branch=main&label=CI">
   </a>
 </p>
-<h3 align="center"><a href="https://github.com/sagernet/sing-box">Sing-box</a> client for Openwrt</h3>
+<h3 align="center"><a href="https://github.com/sagernet/sing-box">Sing-box</a> client for OpenWrt — extended fork</h3>
 </div>
 
 ---
-<p align="center">
-  <a href="https://t.me/netshift_news"><img src="https://img.shields.io/badge/Telegram-Channel-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue" alt="Telegram Channel" /></a>
-  <a href="https://t.me/netshift_chat"><img src="https://img.shields.io/badge/Telegram-Chat-yes?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue" alt="Telegram Chat" /></a>
-</p>
 
----
+**NetShift Extended** (`netshift-extended`) — форк [NetShift](https://github.com/yandexru45/netshift) / [podkop](https://github.com/itdoginfo/podkop): маршрутизатор трафика для OpenWrt на базе [sing-box](https://github.com/SagerNet/sing-box). Нужные домены и подсети — в туннель, остальное — напрямую.
 
-**NetShift** - маршрутизатор трафика для OpenWrt. Направляйте нужные ресурсы в туннель, а остальное - напрямую. Открытое ПО на базе [sing-box](https://github.com/SagerNet/sing-box).
+**Чем отличается от upstream NetShift:**
 
-Это форк [itdoginfo/podkop](https://github.com/itdoginfo/podkop), значительно расширяющий функциональность.
+- **Локальный DNS** — dnsmasq перенаправляет запросы на sing-box (`127.0.0.42:53`), FakeIP `198.18.0.0/15`, split-DNS без утечек на WAN; опционально DNS через outbound.
+- **Автоопределение блокировок (auto-learn)** — если сайт недоступен напрямую: сначала исключение из Zapret v10 desync (`90-script.sh`), при повторной блокировке — hot-patch ruleset в NetShift **без перезапуска**; список доменов в LuCI (вкладка «Auto-detection»).
+
+Пакеты в OpenWrt по-прежнему называются `netshift` / `luci-app-netshift` (совместимость с конфигом `/etc/config/netshift`).
 
 > [!WARNING]
 > Проект находится в стадии бета-версии. Возможны ошибки, нестабильная работа и существенные изменения функциональности.
@@ -41,13 +40,15 @@
 - [x] **Веб-интерфейс LuCI** - дашборд, менеджер компонентов, диагностика и настройки без ручной правки конфигов<br><sub>статус серверов · проверка соединения · логи · вкладки-карточки</sub>
 - [x] **IPv6, блокировка DoH, глобальный прокси** - полная маршрутизация v6 через туннель, защита DNS роутера, режим «весь трафик в туннель»<br><sub>v6 tproxy / DNS / FakeIP · DNS через прокси · фоновый watchdog sing-box</sub>
 - [x] **Автоматическая миграция** - обновление со старого podkop переносит конфиг без перенастройки
+- [x] **Локальный DNS** - dnsmasq → sing-box, FakeIP, маршрутизация DNS-запросов LAN-клиентов через роутер<br><sub>127.0.0.42:53 · split-DNS · DNS via outbound · блокировка DoH</sub>
+- [x] **Автоопределение блокировок** - Zapret exclude → NetShift hot-patch, runtime-список без UCI-restart storm<br><sub>интеграция с `90-script.sh` · LuCI «Auto-detection» · `netshift auto_learn` CLI</sub>
 
 
 ---
 
 <div align="center">
 
-<img src="docs/screenshot.png" alt="NetShift в LuCI" width="800" />
+<img src="docs/screenshot.png" alt="NetShift Extended в LuCI" width="800" />
 
 </div>
 
@@ -100,7 +101,7 @@
 
 ```sh
 mv /etc/config/netshift /etc/config/netshift-070
-wget -O /etc/config/netshift https://raw.githubusercontent.com/yandexru45/netshift/refs/heads/main/netshift/files/etc/config/netshift
+wget -O /etc/config/netshift https://raw.githubusercontent.com/ArmAGEDDon1109/netshift-extended/refs/heads/main/netshift/files/etc/config/netshift
 # затем настроить заново через LuCI или UCI
 ```
 
@@ -113,10 +114,10 @@ wget -O /etc/config/netshift https://raw.githubusercontent.com/yandexru45/netshi
 Для установки и обновления достаточно одного скрипта:
 
 ```sh
-sh <(wget -O - https://raw.githubusercontent.com/yandexru45/netshift/refs/heads/main/install.sh)
+sh <(wget -O - https://raw.githubusercontent.com/ArmAGEDDon1109/netshift-extended/refs/heads/main/install.sh)
 ```
 
-Интерфейс появится в LuCI: **Services → NetShift**.
+Интерфейс появится в LuCI: **Services → NetShift Extended**.
 
 <details>
 <summary><b>Готовые community-списки</b></summary>

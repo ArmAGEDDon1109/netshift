@@ -1,18 +1,21 @@
-# NetShift — AI agent context (composition root)
+# NetShift Extended — AI agent context (composition root)
 
 This file is auto-loaded by OpenCode (and mirrored for Claude Code in
 `.claude/CLAUDE.md`). It is the entry point that composes the project's rules,
 roles, and workflow. Read it fully before doing anything in this repository.
 
-## What NetShift is (one paragraph)
+## What NetShift Extended is (one paragraph)
 
-NetShift is a traffic-routing / VPN client for **OpenWRT 24.10+** routers, built
-on top of **sing-box**. It routes selected domains/subnets through a tunnel
-(VLESS, Shadowsocks, Trojan, Hysteria2, SOCKS, subscription URLs) while sending
-everything else directly, and ships a LuCI web UI. It is a fork of
-`itdoginfo/podkop`, rebranded to NetShift at 0.8.0. It is **beta**.
-License: GPL-2.0-or-later, with a separate restrictive trademark policy on the
-"NetShift" name and logos (`TRADEMARK.md`).
+NetShift Extended (`netshift-extended`) is a private fork of upstream NetShift
+(yandexru45/netshift, originally `itdoginfo/podkop`): a traffic-routing / VPN
+client for **OpenWRT 24.10+** on **sing-box**. It routes selected
+domains/subnets through a tunnel while sending everything else directly, ships
+a LuCI web UI, runs **local DNS** (dnsmasq → sing-box at `127.0.0.42:53`,
+FakeIP), and adds **auto-learn** (blocked-site detection: Zapret exclude first,
+then NetShift hot-patch ruleset without reload). OpenWrt package names stay
+`netshift` / `luci-app-netshift`. It is **beta**. License: GPL-2.0-or-later;
+upstream trademark policy on "NetShift" (`TRADEMARK.md`) may still apply to
+upstream branding assets.
 
 ## Architecture in one sentence
 
