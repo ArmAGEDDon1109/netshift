@@ -1,0 +1,9 @@
+FROM itdoginfo/openwrt-sdk-ipk:24.10.6
+
+ARG NETSHIFT_VERSION
+ENV NETSHIFT_VERSION=${NETSHIFT_VERSION}
+
+COPY ./netshift /builder/package/feeds/utilities/netshift
+
+RUN make defconfig && \
+    make package/netshift/compile V=s -j4

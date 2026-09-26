@@ -1,9 +1,19 @@
 name: Frontend CI
 
 on:
-  pull_request:
+  push:
+    branches:
+      - main
     paths:
       - 'fe-app-netshift/**'
+      - 'luci-app-netshift/**'
+      - '.github/workflows/frontend-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'fe-app-netshift/**'
+      - 'luci-app-netshift/**'
       - '.github/workflows/frontend-ci.yml'
 
 jobs:

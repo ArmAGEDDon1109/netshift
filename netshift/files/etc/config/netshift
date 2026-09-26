@@ -130,9 +130,9 @@ config section 'main'
 # Auto-learn: detect blocked/geo-blocked domains (LuCI "Auto-detection" tab).
 # Runtime domain list: /etc/netshift/auto_learned.json (avoids UCI restart storms).
 # Zapret: /opt/zapret/init.d/openwrt/custom.d/90-script.sh (exclude / v10 bypass).
-#config auto_learn 'auto_learn'
-#        option enabled '0'
-#        option target_section 'main'
-#        option zapret_enabled '1'
-#        option zapret_probe_delay '30'
-#        option max_domains '500'
+config auto_learn 'auto_learn'
+	option enabled '0'
+	option target_section 'main'
+	option zapret_enabled '1'
+	option zapret_probe_delay '30'
+	option max_domains '500'

@@ -17,6 +17,9 @@
 // Diagnostic content
 "require view.netshift.diagnostic as diagnostic";
 
+// Auto-detection content
+"require view.netshift.auto_learn as auto_learn";
+
 // Component Manager content
 "require view.netshift.manager as manager";
 
@@ -59,6 +62,19 @@ const EntryPoint = {
 
     // Render section content
     section.createSectionContent(sectionsSection);
+
+    // Auto-detection tab
+    const autoLearnSection = netshiftMap.section(
+      form.TypedSection,
+      "auto_learn",
+      _("Auto-detection"),
+    );
+    autoLearnSection.anonymous = true;
+    autoLearnSection.addremove = false;
+    autoLearnSection.cfgsections = function () {
+      return ["auto_learn"];
+    };
+    auto_learn.createAutoLearnContent(autoLearnSection);
 
     // Settings tab
     const settingsSection = netshiftMap.section(
