@@ -50,8 +50,7 @@ auto_learn_normalize_domain() {
     local domain="$1"
 
     domain="$(echo "$domain" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    domain="${domain#http://}"
-    domain="${domain#https://}"
+    domain="$(echo "$domain" | sed 's/^[Hh][Tt][Tt][Pp][Ss]*://;s/^[Hh][Tt][Tt][Pp]://')"
     domain="${domain%%/*}"
     domain="${domain%%:*}"
     echo "$domain"

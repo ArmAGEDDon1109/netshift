@@ -7470,15 +7470,15 @@ test_auto_learn() {
 . "ZAPRET_LIB"
 . "AUTO_LEARN_LIB"
 
-NETSHIFT_STATE_DIR="WORK/state"
+NETSHIFT_STATE_DIR="__NS_WORK__/state"
 AUTO_LEARN_STATE_FILE="$NETSHIFT_STATE_DIR/auto_learned.json"
-TMP_RULESET_FOLDER="WORK/tmp/rulesets"
-ZAPRET_INIT_SCRIPT="WORK/zapret_init.sh"
-ZAPRET_90_SCRIPT="WORK/90-script.sh"
-ZAPRET_90_SCRIPT_SHIPPED="WORK/90-script.sh"
-ZAPRET_EXCLUDE_HOSTLIST="WORK/zapret/ipset/zapret-hosts-user-exclude.txt"
-ZAPRET_NETSHIFT_AUTO_EXCLUDE_FILE="WORK/zapret/ipset/zapret-hosts-netshift-auto-exclude.txt"
-ZAPRET_RELOAD_DEBOUNCE_FILE="WORK/zapret_reload.debounce"
+TMP_RULESET_FOLDER="__NS_WORK__/tmp/rulesets"
+ZAPRET_INIT_SCRIPT="__NS_WORK__/zapret_init.sh"
+ZAPRET_90_SCRIPT="__NS_WORK__/90-script.sh"
+ZAPRET_90_SCRIPT_SHIPPED="__NS_WORK__/90-script.sh"
+ZAPRET_EXCLUDE_HOSTLIST="__NS_WORK__/zapret/ipset/zapret-hosts-user-exclude.txt"
+ZAPRET_NETSHIFT_AUTO_EXCLUDE_FILE="__NS_WORK__/zapret/ipset/zapret-hosts-netshift-auto-exclude.txt"
+ZAPRET_RELOAD_DEBOUNCE_FILE="__NS_WORK__/zapret_reload.debounce"
 ZAPRET_RELOAD_DEBOUNCE_SEC="90"
 AUTO_LEARN_RULESET_NAME="auto-learned"
 AUTO_LEARN_DEFAULT_MAX_DOMAINS="500"
@@ -7525,8 +7525,8 @@ norm="$(auto_learn_normalize_domain "HTTPS://sub.example.com/path")"
 auto_learn_validate_domain "$norm" && echo 'autolearn-normalize:OK' || echo 'autolearn-normalize:FAIL'
 
 cat > "$ZAPRET_90_SCRIPT" << 'Z90'
-TARGET="WORK/zapret/ipset/zapret-hosts-user-exclude.txt"
-NETSHIFT_AUTO="WORK/zapret/ipset/zapret-hosts-netshift-auto-exclude.txt"
+TARGET="__NS_WORK__/zapret/ipset/zapret-hosts-user-exclude.txt"
+NETSHIFT_AUTO="__NS_WORK__/zapret/ipset/zapret-hosts-netshift-auto-exclude.txt"
 zapret_netshift_add_exclude() {
     [ -f "$TARGET" ] || touch "$TARGET"
     echo "$1" >> "$TARGET"
@@ -7537,7 +7537,6 @@ add-exclude-quiet) zapret_netshift_add_exclude "$2" ;;
 is-excluded) zapret_netshift_is_excluded "$2" && exit 0; exit 1 ;;
 esac
 Z90
-sed -i "s|WORK|$WORK|g" "$ZAPRET_90_SCRIPT"
 
 touch "$ZAPRET_INIT_SCRIPT"
 chmod +x "$ZAPRET_INIT_SCRIPT"
@@ -7559,7 +7558,7 @@ jq -e --arg d "routed.example" '.rules[] | .domain_suffix | index($d)' "$ruleset
     && echo 'autolearn-hotpatch-ruleset:OK' || echo 'autolearn-hotpatch-ruleset:FAIL'
 ALEOF
 
-    sed -i "s|WORK|$work|g" "$drv"
+    sed -i "s|__NS_WORK__|$work|g" "$drv"
     sed -i "s|CONST_LIB|$const|g" "$drv"
     sed -i "s|LOG_LIB|$NETSHIFT_LIB_DIR/logging.sh|g" "$drv"
     sed -i "s|HELPERS_LIB|$NETSHIFT_LIB_DIR/helpers.sh|g" "$drv"
