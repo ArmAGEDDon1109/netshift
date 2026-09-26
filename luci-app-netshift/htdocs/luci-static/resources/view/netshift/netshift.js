@@ -3,6 +3,9 @@
 "require form";
 "require baseclass";
 "require network";
+"require uci";
+"require fs";
+"require ui";
 "require view.netshift.main as main";
 
 // Settings content
@@ -124,6 +127,45 @@ const EntryPoint = {
 
     // Inject core service
     main.coreService();
+
+    const origSave = netshiftMap.save.bind(netshiftMap);
+    netshiftMap.save = function () {
+      return origSave().then(function () {
+        const autoEnabled = uci.get("netshift", "auto_learn", "enabled");
+        const zapretEnabled = uci.get("netshift", "auto_learn", "zapret_enabled");
+        if (autoEnabled !== "1" || zapretEnabled !== "1") {
+          return Promise.resolve();
+        }
+
+        return fs
+          .exec("/usr/bin/netshift", ["auto_learn", "deploy-zapret"])
+          .then(function (result) {
+            if (result && result.code !== 0) {
+              const detail = (result.stderr || result.stdout || "").trim();
+              ui.addNotification(
+                null,
+                E(
+                  "p",
+                  {},
+                  _("Zapret deploy failed") + (detail ? ": " + detail : ""),
+                ),
+              );
+              return;
+            }
+            ui.addNotification(
+              null,
+              E(
+                "p",
+                {},
+                _(
+                  "Zapret 90-script deployed to /opt/zapret/init.d/openwrt/custom.d/ and Zapret was reloaded.",
+                ),
+              ),
+              "info",
+            );
+          });
+      });
+    };
 
     return netshiftMap.render();
   },

@@ -7474,8 +7474,9 @@ NETSHIFT_STATE_DIR="__NS_WORK__/state"
 AUTO_LEARN_STATE_FILE="$NETSHIFT_STATE_DIR/auto_learned.json"
 TMP_RULESET_FOLDER="__NS_WORK__/tmp/rulesets"
 ZAPRET_INIT_SCRIPT="__NS_WORK__/zapret_init.sh"
-ZAPRET_90_SCRIPT="__NS_WORK__/90-script.sh"
-ZAPRET_90_SCRIPT_SHIPPED="__NS_WORK__/90-script.sh"
+ZAPRET_90_SCRIPT="__NS_WORK__/zapret/custom.d/90-script.sh"
+ZAPRET_90_SCRIPT_SHIPPED="__NS_WORK__/shipped-90-script.sh"
+ZAPRET_RELOAD_MARKER="__NS_WORK__/zapret-reloaded"
 ZAPRET_EXCLUDE_HOSTLIST="__NS_WORK__/zapret/ipset/zapret-hosts-user-exclude.txt"
 ZAPRET_NETSHIFT_AUTO_EXCLUDE_FILE="__NS_WORK__/zapret/ipset/zapret-hosts-netshift-auto-exclude.txt"
 ZAPRET_RELOAD_DEBOUNCE_FILE="__NS_WORK__/zapret_reload.debounce"
@@ -7524,6 +7525,27 @@ norm="$(auto_learn_normalize_domain "HTTPS://sub.example.com/path")"
 [ "$norm" = "sub.example.com" ] && echo 'autolearn-normalize-value:OK' || echo "autolearn-normalize-value:FAIL ($norm)"
 auto_learn_validate_domain "$norm" && echo 'autolearn-normalize:OK' || echo 'autolearn-normalize:FAIL'
 
+cat > "$ZAPRET_90_SCRIPT_SHIPPED" << 'SHIP'
+#!/bin/sh
+echo shipped-90-script
+SHIP
+chmod +x "$ZAPRET_90_SCRIPT_SHIPPED"
+
+cat > "$ZAPRET_INIT_SCRIPT" << 'ZINIT'
+#!/bin/sh
+case "$1" in
+reload) touch "RELOAD_MARKER" ;;
+esac
+ZINIT
+sed -i "s|RELOAD_MARKER|$ZAPRET_RELOAD_MARKER|g" "$ZAPRET_INIT_SCRIPT"
+chmod +x "$ZAPRET_INIT_SCRIPT"
+
+zapret_adapter_deploy_script 1 \
+    && [ -f "$ZAPRET_90_SCRIPT" ] \
+    && cmp -s "$ZAPRET_90_SCRIPT_SHIPPED" "$ZAPRET_90_SCRIPT" \
+    && [ -f "$ZAPRET_RELOAD_MARKER" ] \
+    && echo 'zapret-adapter-deploy:OK' || echo 'zapret-adapter-deploy:FAIL'
+
 cat > "$ZAPRET_90_SCRIPT" << 'Z90'
 TARGET="__NS_WORK__/zapret/ipset/zapret-hosts-user-exclude.txt"
 NETSHIFT_AUTO="__NS_WORK__/zapret/ipset/zapret-hosts-netshift-auto-exclude.txt"
@@ -7537,9 +7559,6 @@ add-exclude-quiet) zapret_netshift_add_exclude "$2" ;;
 is-excluded) zapret_netshift_is_excluded "$2" && exit 0; exit 1 ;;
 esac
 Z90
-
-touch "$ZAPRET_INIT_SCRIPT"
-chmod +x "$ZAPRET_INIT_SCRIPT"
 
 zapret_adapter_is_installed && echo 'zapret-adapter-installed:OK' || echo 'zapret-adapter-installed:FAIL'
 zapret_adapter_add_exclude "blocked.example"
@@ -7570,6 +7589,7 @@ ALEOF
     out="$(ash "$drv" 2>&1)" || true
     echo "$out" | grep -q 'autolearn-state-upsert:OK' && pass "auto-learn state upsert" || fail "auto-learn state upsert" "$out"
     echo "$out" | grep -q 'autolearn-normalize:OK' && pass "auto-learn domain validate" || fail "auto-learn domain validate" "$out"
+    echo "$out" | grep -q 'zapret-adapter-deploy:OK' && pass "zapret adapter deploy" || fail "zapret adapter deploy" "$out"
     echo "$out" | grep -q 'zapret-adapter-add-exclude:OK' && pass "zapret adapter exclude" || fail "zapret adapter exclude" "$out"
     echo "$out" | grep -q 'autolearn-hotpatch-ruleset:OK' && pass "auto-learn ruleset hot-patch" || fail "auto-learn ruleset hot-patch" "$out"
     rm -rf "$work"

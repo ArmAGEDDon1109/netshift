@@ -121,7 +121,7 @@ function createAutoLearnContent(section) {
     "zapret_enabled",
     _("Integrate with Zapret"),
     _(
-      "When a site fails directly, try excluding it from Zapret v10 desync first (via 90-script.sh), then route through NetShift if still blocked.",
+      "When enabled and saved, NetShift copies 90-script.sh to /opt/zapret/init.d/openwrt/custom.d/90-script.sh and reloads Zapret. On a failed direct probe, the domain is added to the Zapret exclude list first; if still blocked, it is routed through NetShift.",
     ),
   );
   o.default = "1";

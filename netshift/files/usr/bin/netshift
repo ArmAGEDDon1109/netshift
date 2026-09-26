@@ -1118,6 +1118,8 @@ start() {
     uci_set "netshift" "settings" "shutdown_correctly" 0
     uci commit "netshift" && config_load "$NETSHIFT_CONFIG"
 
+    zapret_adapter_sync_from_uci
+
     start_sing_box_monitor
 }
 
@@ -5601,7 +5603,7 @@ Available commands:
     component_action_async  Start component_action in background; echoes a job_id
                             (use with component_action_status to poll the outcome)
     component_action_status Report an async component action by job_id: <job_id>
-    auto_learn               Auto-learn blocked domains: status|list|probe|add|remove|clear|zapret-status
+    auto_learn               Auto-learn blocked domains: status|list|probe|add|remove|clear|zapret-status|deploy-zapret
 EOF
 }
 

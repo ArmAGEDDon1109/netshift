@@ -389,6 +389,14 @@ auto_learn_cli() {
     zapret-status)
         zapret_adapter_status_json
         ;;
+    deploy-zapret)
+        if zapret_adapter_deploy_script 1; then
+            zapret_adapter_status_json
+        else
+            echo '{"success":false,"message":"failed to deploy Zapret 90-script"}'
+            return 1
+        fi
+        ;;
     *)
         echo '{"success":false,"message":"unknown auto_learn action"}'
         return 1

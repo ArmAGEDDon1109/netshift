@@ -20,7 +20,7 @@
 **Чем отличается от upstream NetShift:**
 
 - **Локальный DNS** — dnsmasq перенаправляет запросы на sing-box (`127.0.0.42:53`), FakeIP `198.18.0.0/15`, split-DNS без утечек на WAN; опционально DNS через outbound.
-- **Автоопределение блокировок (auto-learn)** — если сайт недоступен напрямую: сначала исключение из Zapret v10 desync (`90-script.sh`), при повторной блокировке — hot-patch ruleset в NetShift **без перезапуска**; список доменов в LuCI (вкладка «Auto-detection»).
+- **Автоопределение блокировок (auto-learn)** — если сайт недоступен напрямую: сначала исключение из Zapret v10 desync (`90-script.sh`), при повторной блокировке — hot-patch ruleset в NetShift **без перезапуска**; список доменов в LuCI (вкладка «Auto-detection»). При включении «Integrate with Zapret» скрипт копируется в `/opt/zapret/init.d/openwrt/custom.d/90-script.sh` и Zapret перезапускается.
 
 Пакеты в OpenWrt по-прежнему называются `netshift` / `luci-app-netshift` (совместимость с конфигом `/etc/config/netshift`).
 
