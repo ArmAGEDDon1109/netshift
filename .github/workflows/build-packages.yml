@@ -111,6 +111,8 @@ jobs:
     name: Build APK (all)
     runs-on: ubuntu-latest
     needs: preparation
+    # APK SDK (OpenWrt 25.x) is experimental; do not block IPK artifacts on failure.
+    continue-on-error: true
     if: github.event.inputs.package == 'all' || github.event.inputs.package == '' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v5.0.0
