@@ -71,12 +71,19 @@ jobs:
       - name: Copy NetShift packages from ${{ matrix.package_type }} Docker container
         run: |
           PKG_FMT="${{ matrix.package_type }}"
+          VERSION="${{ needs.preparation.outputs.version }}"
           mkdir -p "./staging/${PKG_FMT}/utilities" "./staging/${PKG_FMT}/luci" "./bin/${PKG_FMT}"
           docker cp "${PKG_FMT}:/builder/bin/packages/x86_64/utilities/." "./staging/${PKG_FMT}/utilities/" || true
           docker cp "${PKG_FMT}:/builder/bin/packages/x86_64/luci/." "./staging/${PKG_FMT}/luci/" || true
-          for pattern in netshift luci-app-netshift luci-i18n-netshift-ru; do
-            find "./staging/${PKG_FMT}" -maxdepth 2 -name "${pattern}*.${PKG_FMT}" -exec cp -t "./bin/${PKG_FMT}/" {} +
-          done
+          if [ "$PKG_FMT" = "ipk" ]; then
+            cp "./staging/${PKG_FMT}/utilities/netshift_${VERSION}"*".ipk" "./bin/${PKG_FMT}/"
+            cp "./staging/${PKG_FMT}/luci/luci-app-netshift_${VERSION}"*".ipk" "./bin/${PKG_FMT}/"
+            cp "./staging/${PKG_FMT}/luci/luci-i18n-netshift-ru_${VERSION}"*".ipk" "./bin/${PKG_FMT}/"
+          else
+            cp "./staging/${PKG_FMT}/utilities/netshift-${VERSION}"*".apk" "./bin/${PKG_FMT}/"
+            cp "./staging/${PKG_FMT}/luci/luci-app-netshift-${VERSION}"*".apk" "./bin/${PKG_FMT}/"
+            cp "./staging/${PKG_FMT}/luci/luci-i18n-netshift-ru-${VERSION}"*".apk" "./bin/${PKG_FMT}/"
+          fi
           ls -la "./bin/${PKG_FMT}/"
           test "$(find "./bin/${PKG_FMT}" -maxdepth 1 -name "*.${PKG_FMT}" | wc -l)" -eq 3
 
