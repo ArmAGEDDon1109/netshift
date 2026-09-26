@@ -62,6 +62,7 @@ jobs:
           context: .
           tags: netshift:ci-${{ matrix.package_type }}
           load: true
+          no-cache: true
           build-args: |
             NETSHIFT_VERSION=${{ needs.preparation.outputs.version }}
 
@@ -69,21 +70,37 @@ jobs:
         run: docker create --name ${{ matrix.package_type }} netshift:ci-${{ matrix.package_type }}
 
       - name: Copy NetShift packages from ${{ matrix.package_type }} Docker container
+        shell: bash
         run: |
+          set -euo pipefail
           PKG_FMT="${{ matrix.package_type }}"
           VERSION="${{ needs.preparation.outputs.version }}"
           mkdir -p "./staging/${PKG_FMT}/utilities" "./staging/${PKG_FMT}/luci" "./bin/${PKG_FMT}"
           docker cp "${PKG_FMT}:/builder/bin/packages/x86_64/utilities/." "./staging/${PKG_FMT}/utilities/" || true
           docker cp "${PKG_FMT}:/builder/bin/packages/x86_64/luci/." "./staging/${PKG_FMT}/luci/" || true
+
+          copy_one() {
+            local pattern="$1"
+            local matches
+            matches="$(find "./staging/${PKG_FMT}" -maxdepth 2 -name "${pattern}" | sort)"
+            if [ -z "$matches" ]; then
+              echo "Missing package matching: ${pattern}" >&2
+              find "./staging/${PKG_FMT}" -maxdepth 2 -type f -name "*netshift*" -ls >&2 || true
+              exit 1
+            fi
+            echo "$matches" | tail -n 1 | xargs -I{} cp "{}" "./bin/${PKG_FMT}/"
+          }
+
           if [ "$PKG_FMT" = "ipk" ]; then
-            cp "./staging/${PKG_FMT}/utilities/netshift_${VERSION}"*".ipk" "./bin/${PKG_FMT}/"
-            cp "./staging/${PKG_FMT}/luci/luci-app-netshift_${VERSION}"*".ipk" "./bin/${PKG_FMT}/"
-            cp "./staging/${PKG_FMT}/luci/luci-i18n-netshift-ru_${VERSION}"*".ipk" "./bin/${PKG_FMT}/"
+            copy_one "netshift_${VERSION}*.ipk"
+            copy_one "luci-app-netshift_${VERSION}*.ipk"
+            copy_one "luci-i18n-netshift-ru_${VERSION}*.ipk"
           else
-            cp "./staging/${PKG_FMT}/utilities/netshift-${VERSION}"*".apk" "./bin/${PKG_FMT}/"
-            cp "./staging/${PKG_FMT}/luci/luci-app-netshift-${VERSION}"*".apk" "./bin/${PKG_FMT}/"
-            cp "./staging/${PKG_FMT}/luci/luci-i18n-netshift-ru-${VERSION}"*".apk" "./bin/${PKG_FMT}/"
+            copy_one "netshift-${VERSION}*.apk"
+            copy_one "luci-app-netshift-${VERSION}*.apk"
+            copy_one "luci-i18n-netshift-ru-${VERSION}*.apk"
           fi
+
           ls -la "./bin/${PKG_FMT}/"
           test "$(find "./bin/${PKG_FMT}" -maxdepth 1 -name "*.${PKG_FMT}" | wc -l)" -eq 3
 
