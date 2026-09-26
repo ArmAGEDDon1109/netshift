@@ -4823,14 +4823,19 @@ get_sing_box_status() {
 
 get_status() {
     local enabled=0
-    local status=""
+    local status="disabled"
 
-    # Check if service is enabled
+    # Autostart symlink (procd enable)
     if [ -x /etc/rc.d/S99netshift ]; then
         enabled=1
         status="enabled"
-    else
-        status="disabled"
+    fi
+
+    # Running without enable (manual start / partial install)
+    if pgrep -f "/usr/bin/netshift start" >/dev/null 2>&1 || \
+        pgrep -f "/usr/bin/netshift __monitor" >/dev/null 2>&1; then
+        enabled=1
+        status="running"
     fi
 
     echo "{\"enabled\":$enabled,\"status\":\"$status\"}"
