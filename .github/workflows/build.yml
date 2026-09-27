@@ -80,10 +80,10 @@ jobs:
           pick_pkg() {
             local glob="$1"
             local path
-            path="$(docker exec "${PKG_FMT}" sh -c "ls -1 ${glob} 2>/dev/null | sort | tail -n 1")"
+            path="$(docker run --rm --entrypoint sh "netshift:ci-${PKG_FMT}" -c "ls -1 ${glob} 2>/dev/null | sort | tail -n 1")"
             if [ -z "$path" ]; then
               echo "Missing package: ${glob}" >&2
-              docker exec "${PKG_FMT}" find /builder/bin/packages/x86_64 -maxdepth 2 -name '*netshift*' -ls >&2 || true
+              docker run --rm --entrypoint find "netshift:ci-${PKG_FMT}" /builder/bin/packages/x86_64 -maxdepth 2 -name '*netshift*' -ls >&2 || true
               exit 1
             fi
             docker cp "${PKG_FMT}:${path}" "./bin/${PKG_FMT}/"
