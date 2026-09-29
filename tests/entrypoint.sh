@@ -5353,10 +5353,12 @@ echo "$cfg_paranoid" | jq -e --arg i "$SB_DNS_INBOUND_TAG" --arg o "$DETOUR_TAG"
 # Route rules reference dns-in inbound and main-out; add minimal stubs so
 # `sing-box check` validates structure, not full production wiring.
 dns_check_ready() {
-    echo "$1" | jq '
+    local cfg="$1"
+    cfg=$(sing_box_cm_add_direct_inbound "$cfg" "dns-in" "127.0.0.42" 53)
+    echo "$cfg" | jq '
         .outbounds = ((.outbounds // []) + [{type:"direct",tag:"main-out"}])
-        | .inbounds = ((.inbounds // []) + [{type:"direct",tag:"dns-in",listen:"127.0.0.1"}])
-        | .route = ((.route // {}) | .final = (.final // "direct-out"))
+        | .route.final = (.route.final // "direct-out")
+        | .route.rules = ((.route.rules // []) | map(del(.__service_tag)))
     '
 }
 if command -v sing-box > /dev/null 2>&1; then
