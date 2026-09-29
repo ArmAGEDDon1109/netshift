@@ -215,8 +215,8 @@ auto_learn_collect_ruleset_domain_suffixes() {
     ruleset_filepath="$TMP_RULESET_FOLDER/$ruleset_tag.json"
     [ -f "$ruleset_filepath" ] || return 0
 
-    jq -r '.rules[]? | .domain_suffix[]?' "$ruleset_filepath" 2>/dev/null \
-        >> "$AUTO_LEARN_SUFFIX_AGG_FILE"
+    jq -r '.rules[] | select(.domain_suffix != null) | .domain_suffix[]' \
+        "$ruleset_filepath" 2>/dev/null >> "$AUTO_LEARN_SUFFIX_AGG_FILE"
 }
 
 # All domain_suffix entries that route the auto-learn target section (UCI + list files + built rulesets).

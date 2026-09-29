@@ -7636,8 +7636,7 @@ auto_learn_domain_ready_for_probe "fresh.example" && echo 'autolearn-ready-new:O
 auto_learn_domain_ready_for_probe "example.com" && echo 'autolearn-ready-netshift:FAIL' || echo 'autolearn-ready-netshift:OK'
 
 AL_USER_LIST_TYPE=text
-AL_USER_DOMAINS_TEXT="api2.cursor.sh
-cursor.sh"
+AL_USER_DOMAINS_TEXT='api2.cursor.sh,cursor.sh'
 auto_learn_domain_covered_by_target_section_lists "api2.cursor.sh" \
     && echo 'autolearn-section-list-exact:OK' || echo 'autolearn-section-list-exact:FAIL'
 auto_learn_domain_covered_by_target_section_lists "api5.cursor.sh" \
@@ -7645,14 +7644,14 @@ auto_learn_domain_covered_by_target_section_lists "api5.cursor.sh" \
 auto_learn_domain_covered_by_target_section_lists "other.example" \
     && echo 'autolearn-section-list-negative:FAIL' || echo 'autolearn-section-list-negative:OK'
 
-local_list_file="__NS_WORK__/local-domains.txt"
-printf '%s\n' 'from-local.example' > "$local_list_file"
-AL_LOCAL_DOMAIN_LIST="$local_list_file"
+AL_LOCAL_DOMAIN_LIST="__NS_WORK__/local-domains.txt"
+printf '%s\n' 'from-local.example' > "$AL_LOCAL_DOMAIN_LIST"
 auto_learn_domain_covered_by_target_section_lists "sub.from-local.example" \
     && echo 'autolearn-section-list-local-file:OK' || echo 'autolearn-section-list-local-file:FAIL'
 
 ruleset_tag="$(get_ruleset_tag main user domains)"
 ruleset_filepath="$TMP_RULESET_FOLDER/$ruleset_tag.json"
+mkdir -p "$TMP_RULESET_FOLDER"
 jq -n --arg d 'ruleset-only.example' '{version: 3, rules: [{domain_suffix: [$d]}]}' > "$ruleset_filepath"
 auto_learn_domain_covered_by_target_section_lists "api.ruleset-only.example" \
     && echo 'autolearn-section-list-ruleset:OK' || echo 'autolearn-section-list-ruleset:FAIL'
