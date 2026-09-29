@@ -41,6 +41,10 @@ export const NetShiftShellMethods = {
     callBaseMethod<NetShift.GetClashApiProxyLatency>(
       NetShift.AvailableMethods.CLASH_API,
       [NetShift.AvailableClashAPIMethods.GET_PROXY_LATENCY, tag, '5000'],
+      undefined,
+      // The dashboard probes many servers at once; batched, they would run
+      // one by one and all answer together.
+      { nobatch: true },
     ),
   getClashApiGroupLatency: async (tag: string) =>
     callBaseMethod<NetShift.GetClashApiGroupLatency>(
@@ -96,7 +100,11 @@ export const NetShiftShellMethods = {
   subscriptionUpdate: async () =>
     callBaseMethod<unknown>(NetShift.AvailableMethods.SUBSCRIPTION_UPDATE),
   singBoxComponentAction: async (
-    action: 'install_extended' | 'install_stable' | 'check_update',
+    action:
+      | 'install_extended'
+      | 'install_extended_lite'
+      | 'install_stable'
+      | 'check_update',
   ): Promise<SingBoxComponentActionResult> => {
     // `check_update` is a quick single call — not subject to the rpcd 30s wall —
     // so keep it on the SYNCHRONOUS `component_action` path (unchanged shape).
@@ -176,11 +184,12 @@ export const NetShiftShellMethods = {
     });
   },
   // Sing-box update checks (sync) — STABLE task-017 contract:
-  //   component_action sing_box check_update        (extended)
-  //   component_action sing_box check_update_stable (stock)
+  //   component_action sing_box check_update         (extended)
+  //   component_action sing_box check_update_stable  (stock)
+  //   component_action sing_box check_update_lite    (extended lite)
   // → {success, current_version, latest_version, status}.
   singBoxCheckUpdate: async (
-    action: 'check_update' | 'check_update_stable',
+    action: 'check_update' | 'check_update_stable' | 'check_update_lite',
   ): Promise<NetShift.ComponentCheckUpdateResult> => {
     const response = await executeShellCommand({
       command: '/usr/bin/netshift',

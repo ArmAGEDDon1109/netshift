@@ -1,13 +1,13 @@
 #!/bin/sh
 # shellcheck shell=dash
 
-REPO="https://api.github.com/repos/ArmAGEDDon1109/netshift-extended/releases/latest"
+REPO="https://api.github.com/repos/yandexru45/netshift/releases/latest"
 # github.com FRONTEND redirect path (NOT the rate-limited api.github.com).
 # /releases/latest 302s to /releases/tag/<tag>; /releases/download/<tag>/<asset>
 # 302s to the CDN. Primary install path so CGNAT / shared-IP routers avoid the
 # 60/hour/IP API limit; REPO stays as the fallback.
-RELEASES_LATEST_REDIRECT="https://github.com/ArmAGEDDon1109/netshift-extended/releases/latest"
-RELEASES_DOWNLOAD_BASE="https://github.com/ArmAGEDDon1109/netshift-extended/releases/download"
+RELEASES_LATEST_REDIRECT="https://github.com/yandexru45/netshift/releases/latest"
+RELEASES_DOWNLOAD_BASE="https://github.com/yandexru45/netshift/releases/download"
 DOWNLOAD_DIR="/tmp/netshift"
 COUNT=3
 
@@ -72,7 +72,7 @@ update_config() {
     printf "\033[48;5;196m\033[1m║ ! Обнаружена старая версия NetShift.                                 ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Если продолжите обновление, вам потребуется настроить NetShift заново.║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Старая конфигурация будет сохранена в /etc/config/netshift-070       ║\033[0m\n"
-    printf "\033[48;5;196m\033[1m║ Подробности: https://github.com/ArmAGEDDon1109/netshift-extended                  ║\033[0m\n"
+    printf "\033[48;5;196m\033[1m║ Подробности: https://github.com/yandexru45/netshift                  ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Точно хотите продолжить?                                             ║\033[0m\n"
     printf "\033[48;5;196m\033[1m╚══════════════════════════════════════════════════════════════════════╝\033[0m\n"
 
@@ -82,7 +82,7 @@ update_config() {
     printf "\033[48;5;196m\033[1m║ ! Detected old NetShift version.                                     ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ If you continue the update, you will need to RECONFIGURE NetShift.   ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Your old configuration will be saved to /etc/config/netshift-070     ║\033[0m\n"
-    printf "\033[48;5;196m\033[1m║ Details: https://github.com/ArmAGEDDon1109/netshift-extended                      ║\033[0m\n"
+    printf "\033[48;5;196m\033[1m║ Details: https://github.com/yandexru45/netshift                      ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Are you sure you want to continue?                                   ║\033[0m\n"
     printf "\033[48;5;196m\033[1m╚══════════════════════════════════════════════════════════════════════╝\033[0m\n"
 
@@ -94,7 +94,7 @@ update_config() {
 
             yes|y|Y)
                 mv /etc/config/netshift /etc/config/netshift-070
-                wget -O /etc/config/netshift https://raw.githubusercontent.com/ArmAGEDDon1109/netshift-extended/refs/heads/main/netshift/files/etc/config/netshift
+                wget -O /etc/config/netshift https://raw.githubusercontent.com/yandexru45/netshift/refs/heads/main/netshift/files/etc/config/netshift
                 msg "NetShift config has been reset to default. Your old config saved in /etc/config/netshift-070"
                 break
                 ;;
@@ -135,7 +135,7 @@ migrate_from_podkop() {
     printf "\033[48;5;196m\033[1m║ Ваша конфигурация будет перенесена автоматически.                   ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Старая конфигурация сохранится в /etc/config/podkop.bak.pre-netshift║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Старый пакет podkop будет удалён, NetShift будет установлен.         ║\033[0m\n"
-    printf "\033[48;5;196m\033[1m║ Подробности: https://github.com/ArmAGEDDon1109/netshift-extended                  ║\033[0m\n"
+    printf "\033[48;5;196m\033[1m║ Подробности: https://github.com/yandexru45/netshift                  ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Точно хотите продолжить?                                             ║\033[0m\n"
     printf "\033[48;5;196m\033[1m╚══════════════════════════════════════════════════════════════════════╝\033[0m\n"
 
@@ -146,7 +146,7 @@ migrate_from_podkop() {
     printf "\033[48;5;196m\033[1m║ Your configuration will be carried over automatically.              ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Old config will be backed up to /etc/config/podkop.bak.pre-netshift ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ The old podkop package will be removed, NetShift installed.          ║\033[0m\n"
-    printf "\033[48;5;196m\033[1m║ Details: https://github.com/ArmAGEDDon1109/netshift-extended                      ║\033[0m\n"
+    printf "\033[48;5;196m\033[1m║ Details: https://github.com/yandexru45/netshift                      ║\033[0m\n"
     printf "\033[48;5;196m\033[1m║ Are you sure you want to continue?                                   ║\033[0m\n"
     printf "\033[48;5;196m\033[1m╚══════════════════════════════════════════════════════════════════════╝\033[0m\n"
 
@@ -271,9 +271,146 @@ download_release_asset() {
     return 1
 }
 
+# Returns 0 if the sing-box binary on the router is an "extended" build.
+# The backend tests the version string the same way (helpers.sh
+# is_sing_box_extended); the installer cannot source the backend libraries
+# (they may not be installed yet), so the check is repeated locally.
+sing_box_is_extended() {
+    command -v sing-box >/dev/null 2>&1 || return 1
+
+    case "$(sing-box version 2>/dev/null | head -n 1)" in
+    *extended*) return 0 ;;
+    esac
+
+    return 1
+}
+
+# Asks which sing-box core to install and stores the answer in SING_BOX_CORE
+# (stock|extended|extended_lite). Same plain read loop as the Russian-language
+# prompt below: an unrecognised answer re-asks instead of aborting the install.
+# On EOF (the script is piped rather than run from a terminal) the stock core
+# is chosen, which is what the installer did before this prompt existed.
+select_sing_box_core() {
+    msg "Какое ядро sing-box поставить? (Which sing-box core to install?)"
+    msg "1) Стоковый sing-box (stock, из фидов OpenWrt)"
+    msg "2) sing-box-extended (сборка shtorm-7, больше протоколов)"
+    msg "3) sing-box-extended-lite (облегчённая сборка для устройств с малой Flash)"
+
+    while true; do
+        if ! read -r -p '' CORE; then
+            msg "Нет ответа, ставим стоковый sing-box (No input, installing the stock core)"
+            SING_BOX_CORE="stock"
+            break
+        fi
+
+        case $CORE in
+        1)
+            SING_BOX_CORE="stock"
+            break
+            ;;
+        2)
+            SING_BOX_CORE="extended"
+            break
+            ;;
+        3)
+            SING_BOX_CORE="extended_lite"
+            break
+            ;;
+        *)
+            echo "Введите 1, 2 или 3 (Enter 1, 2 or 3)"
+            ;;
+        esac
+    done
+}
+
+# Returns 0 if the sing-box binary on the router is an "extended lite" build
+# — ours or a community manual one (MANCrimSon/EikeiDev): the version banner
+# carries the -lite suffix, or /usr/bin/sing-box is a shell wrapper over the
+# side-loaded core. The installer cannot source the backend libraries (they
+# may not be installed yet), so the variant check is repeated locally,
+# mirroring helpers.sh get_sing_box_variant.
+sing_box_is_lite() {
+    command -v sing-box >/dev/null 2>&1 || return 1
+
+    case "$(sing-box version 2>/dev/null | head -n 1)" in
+    *-lite*) return 0 ;;
+    esac
+
+    if [ "$(head -c 2 /usr/bin/sing-box 2>/dev/null)" = "#!" ] &&
+        [ -f /usr/libexec/sing-box-core ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Applies the core chosen in select_sing_box_core. All directions go through
+# the backend component action — the same one the LuCI component manager
+# calls — so the download, the sha256 verification, the tmpfs backup/rollback
+# and the lite artifact cleanup are not duplicated here. By this point the
+# package install has already pulled the stock core in as a netshift
+# dependency, so the stock choice is a no-op unless an extended (or lite)
+# build is currently in place.
+apply_sing_box_core() {
+    local action="" result
+
+    case "$SING_BOX_CORE" in
+    extended)
+        # A lite build already in place is extended-family but NOT the full
+        # build — only a non-lite extended core skips the switch.
+        if sing_box_is_extended && ! sing_box_is_lite; then
+            msg "sing-box-extended is already installed"
+            return 0
+        fi
+        action="install_extended"
+        ;;
+    extended_lite)
+        if sing_box_is_lite; then
+            msg "sing-box-extended-lite is already installed"
+            return 0
+        fi
+        action="install_extended_lite"
+        ;;
+    stock)
+        if ! command -v sing-box >/dev/null 2>&1; then
+            msg "sing-box is not installed; the stock core comes with the NetShift package"
+            return 0
+        fi
+        if ! sing_box_is_extended; then
+            msg "Stock sing-box is already installed"
+            return 0
+        fi
+        action="install_stable"
+        ;;
+    *)
+        return 0
+        ;;
+    esac
+
+    if [ ! -x /usr/bin/netshift ]; then
+        msg "NetShift binary not found; skipping the sing-box core switch"
+        return 1
+    fi
+
+    msg "Switching the sing-box core ($action)..."
+    result=$(/usr/bin/netshift component_action sing_box "$action" 2>&1)
+
+    case "$result" in
+    *'"success":true'*)
+        msg "sing-box core switched successfully"
+        ;;
+    *)
+        msg "Failed to switch the sing-box core; NetShift keeps the core it had."
+        msg "$result"
+        return 1
+        ;;
+    esac
+}
+
 main() {
     check_system
     sing_box
+    select_sing_box_core
 
     /usr/sbin/ntpd -q -p 194.190.168.1 -p 216.239.35.0 -p 216.239.35.4 -p 162.159.200.1 -p 162.159.200.123
 
@@ -318,11 +455,12 @@ main() {
             fi
             download_release_asset "$RELEASES_DOWNLOAD_BASE/$release_tag/$filename" "$filename"
         done
-        # RU i18n only if already installed (mirrors the install flow below).
-        if pkg_is_installed luci-i18n-netshift-ru; then
-            filename="luci-i18n-netshift-ru-${release_tag}.${ext}"
-            download_release_asset "$RELEASES_DOWNLOAD_BASE/$release_tag/$filename" "$filename"
-        fi
+        # RU i18n is always downloaded: the install flow below upgrades it when
+        # already installed and otherwise asks whether to install it. Skipping the
+        # download on a fresh install silently dropped that prompt. A failed
+        # download is not fatal (download_release_asset only returns 1).
+        filename="luci-i18n-netshift-ru-${release_tag}.${ext}"
+        download_release_asset "$RELEASES_DOWNLOAD_BASE/$release_tag/$filename" "$filename"
     else
         # FALLBACK: scrape the api.github.com release JSON for .ipk/.apk URLs.
         if command -v curl >/dev/null 2>&1; then
@@ -396,6 +534,8 @@ main() {
             done
         fi
     fi
+
+    apply_sing_box_core
 
     find "$DOWNLOAD_DIR" -type f -name '*netshift*' -exec rm {} \;
 }

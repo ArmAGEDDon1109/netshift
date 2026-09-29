@@ -34,13 +34,14 @@ function fetchAutoLearnJson(args) {
     });
 }
 
-function renderDomainTable(domains, onRemove) {
+function renderDomainTable(domains, options) {
+  const opts = options || {};
+  const showStage = opts.showStage !== false;
+  const emptyMessage =
+    opts.emptyMessage || _("No auto-detected domains yet.");
+
   if (!domains || !domains.length) {
-    return E(
-      "p",
-      { class: "cbi-value-description" },
-      _("No auto-detected domains yet."),
-    );
+    return E("p", { class: "cbi-value-description" }, emptyMessage);
   }
 
   const rows = domains.map(function (entry) {
@@ -51,9 +52,11 @@ function renderDomainTable(domains, onRemove) {
       ? new Date(entry.updated_at * 1000).toLocaleString()
       : "";
 
-    return E("tr", { class: "tr" }, [
-      E("td", { class: "td" }, name),
-      E("td", { class: "td" }, stage),
+    const cells = [E("td", { class: "td" }, name)];
+    if (showStage) {
+      cells.push(E("td", { class: "td" }, stage));
+    }
+    cells.push(
       E("td", { class: "td" }, reason),
       E("td", { class: "td" }, updated),
       E(
@@ -65,81 +68,147 @@ function renderDomainTable(domains, onRemove) {
             class: "cbi-button cbi-button-remove",
             click: function (ev) {
               ev.preventDefault();
-              onRemove(name);
+              if (opts.onRemove) {
+                opts.onRemove(name);
+              }
             },
           },
           _("Remove"),
         ),
       ),
-    ]);
+    );
+
+    return E("tr", { class: "tr" }, cells);
   });
+
+  const headers = [E("th", { class: "th" }, _("Domain"))];
+  if (showStage) {
+    headers.push(E("th", { class: "th" }, _("Stage")));
+  }
+  headers.push(
+    E("th", { class: "th" }, _("Reason")),
+    E("th", { class: "th" }, _("Updated")),
+    E("th", { class: "th" }, _("Actions")),
+  );
 
   return E(
     "table",
     { class: "table", style: "width:100%; margin-top:0.5em;" },
-    [
-      E("tr", { class: "tr table-titles" }, [
-        E("th", { class: "th" }, _("Domain")),
-        E("th", { class: "th" }, _("Stage")),
-        E("th", { class: "th" }, _("Reason")),
-        E("th", { class: "th" }, _("Updated")),
-        E("th", { class: "th" }, _("Actions")),
-      ]),
-    ].concat(rows),
+    [E("tr", { class: "tr table-titles" }, headers)].concat(rows),
   );
 }
 
-function refreshDomainPanel(container) {
-  if (!container) {
+function removeDomainAndRefresh(domain, frame) {
+  return fetchAutoLearnJson(["remove", domain])
+    .then(function () {
+      ui.addNotification(
+        null,
+        E("p", {}, _("Removed domain: %s").format(domain)),
+      );
+      return refreshAutoLearnFrame(frame);
+    })
+    .catch(function (err) {
+      ui.addNotification(null, E("p", {}, String(err)));
+    });
+}
+
+function refreshAutoLearnFrame(frame) {
+  if (!frame) {
     return Promise.resolve();
   }
 
-  container.innerHTML = "";
-  container.appendChild(
-    E("p", { class: "cbi-value-description" }, _("Loading…")),
-  );
+  const routedHost = frame.querySelector(".ns-auto-learn-domains__table");
+  const logHost = frame.querySelector(".ns-auto-learn-domains__log");
+  const logSummary = frame.querySelector(".ns-auto-learn-log__summary");
+
+  if (routedHost) {
+    routedHost.innerHTML = "";
+    routedHost.appendChild(
+      E("p", { class: "cbi-value-description" }, _("Loading…")),
+    );
+  }
+  if (logHost) {
+    logHost.innerHTML = "";
+    logHost.appendChild(
+      E("p", { class: "cbi-value-description" }, _("Loading…")),
+    );
+  }
 
   return fetchAutoLearnJson(["list"])
     .then(function (data) {
-      const domains = (data && data.domains) || [];
-      container.innerHTML = "";
-      container.appendChild(
-        renderDomainTable(domains, function (domain) {
-          fetchAutoLearnJson(["remove", domain])
-            .then(function () {
-              ui.addNotification(
-                null,
-                E("p", {}, _("Removed domain: %s").format(domain)),
-              );
-              return refreshDomainPanel(container);
-            })
-            .catch(function (err) {
-              ui.addNotification(null, E("p", {}, String(err)));
-            });
-        }),
-      );
+      const all = (data && data.domains) || [];
+      const routed = all.filter(function (entry) {
+        return entry.stage === "netshift";
+      });
+      const log = all.filter(function (entry) {
+        return entry.stage !== "netshift";
+      });
+
+      if (logSummary) {
+        logSummary.textContent = _("Detection log (%d)").format(log.length);
+      }
+
+      if (routedHost) {
+        routedHost.innerHTML = "";
+        routedHost.appendChild(
+          renderDomainTable(routed, {
+            showStage: false,
+            emptyMessage: _("No domains routed through NetShift yet."),
+            onRemove: function (domain) {
+              removeDomainAndRefresh(domain, frame);
+            },
+          }),
+        );
+      }
+
+      if (logHost) {
+        logHost.innerHTML = "";
+        logHost.appendChild(
+          renderDomainTable(log, {
+            showStage: true,
+            emptyMessage: _("Detection log is empty."),
+            onRemove: function (domain) {
+              removeDomainAndRefresh(domain, frame);
+            },
+          }),
+        );
+      }
     })
     .catch(function (err) {
-      container.innerHTML = "";
-      container.appendChild(
-        E(
-          "p",
-          {
-            class: "cbi-value-description",
-            style: "color: var(--error-color-medium, #c00);",
-          },
-          String(err),
-        ),
-      );
+      const message = String(err);
+      if (routedHost) {
+        routedHost.innerHTML = "";
+        routedHost.appendChild(
+          E(
+            "p",
+            {
+              class: "cbi-value-description",
+              style: "color: var(--error-color-medium, #c00);",
+            },
+            message,
+          ),
+        );
+      }
+      if (logHost) {
+        logHost.innerHTML = "";
+        logHost.appendChild(
+          E(
+            "p",
+            {
+              class: "cbi-value-description",
+              style: "color: var(--error-color-medium, #c00);",
+            },
+            message,
+          ),
+        );
+      }
     });
 }
 
 function refreshAllDomainPanels() {
-  document
-    .querySelectorAll(".ns-auto-learn-domains__table")
-    .forEach(function (host) {
-      refreshDomainPanel(host);
-    });
+  document.querySelectorAll("[data-ns-auto-learn]").forEach(function (frame) {
+    refreshAutoLearnFrame(frame);
+  });
 }
 
 function setZapretStatusBadge(badgeEl, state, title) {
@@ -199,14 +268,14 @@ function initDomainListMounts() {
     }
     frame.dataset.nsInit = "1";
 
-    const tableHost = frame.querySelector(".ns-auto-learn-domains__table");
     const refreshBtn = frame.querySelector('[data-action="refresh-domains"]');
     const clearBtn = frame.querySelector('[data-action="clear-domains"]');
+    const clearLogBtn = frame.querySelector('[data-action="clear-log"]');
 
     if (refreshBtn) {
       refreshBtn.addEventListener("click", function (ev) {
         ev.preventDefault();
-        refreshDomainPanel(tableHost);
+        refreshAutoLearnFrame(frame);
       });
     }
 
@@ -219,7 +288,7 @@ function initDomainListMounts() {
               null,
               E("p", {}, _("Cleared NetShift auto-learn list")),
             );
-            return refreshDomainPanel(tableHost);
+            return refreshAutoLearnFrame(frame);
           })
           .catch(function (err) {
             ui.addNotification(null, E("p", {}, String(err)));
@@ -227,7 +296,21 @@ function initDomainListMounts() {
       });
     }
 
-    refreshDomainPanel(tableHost);
+    if (clearLogBtn) {
+      clearLogBtn.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        fetchAutoLearnJson(["clear-log"])
+          .then(function () {
+            ui.addNotification(null, E("p", {}, _("Cleared detection log")));
+            return refreshAutoLearnFrame(frame);
+          })
+          .catch(function (err) {
+            ui.addNotification(null, E("p", {}, String(err)));
+          });
+      });
+    }
+
+    refreshAutoLearnFrame(frame);
   });
 
   if (domainListPollTimer) {
@@ -287,7 +370,7 @@ function createAutoLearnContent(section) {
     "enabled",
     _("Enable auto-detection"),
     _(
-      "Detect blocked or geo-blocked sites. Domains are stored outside UCI to avoid restarts on each add.",
+      "Automatically probe DNS queries from LAN clients (via dnsmasq logs): raw WAN (Zapret desync off), then Zapret desync, then route through NetShift. *.ru, Yandex (*.yandex.*, ya.ru), and local names (*.lan, *.local, *.home.arpa, unqualified hostnames, etc.) are ignored. Domains are stored outside UCI to avoid restarts on each add.",
     ),
   );
   o.default = "0";
@@ -360,13 +443,20 @@ function createAutoLearnContent(section) {
     );
   };
 
-  o = section.option(form.DummyValue, "_domain_list", _("Detected domains"));
+  o = section.option(
+    form.DummyValue,
+    "_domain_list",
+    _("Routed through NetShift"),
+  );
   o.depends("enabled", "1");
   o.rawhtml = true;
   o.cfgvalue = function () {
     scheduleAutoLearnUiInit();
     return (
       '<div class="ns-auto-learn-domains" data-ns-auto-learn="1">' +
+      '<p class="cbi-value-description" style="margin-top:0;">' +
+      _("Domains below are actively routed through the VPN tunnel.") +
+      ' <span style="opacity:0.55;font-size:0.9em;">(UI v2)</span></p>' +
       '<div class="ns-auto-learn-domains__toolbar" style="margin-bottom:0.5em;">' +
       '<button type="button" class="cbi-button cbi-button-action" data-action="refresh-domains">' +
       _("Refresh") +
@@ -376,6 +466,20 @@ function createAutoLearnContent(section) {
       "</button>" +
       "</div>" +
       '<div class="ns-auto-learn-domains__table"></div>' +
+      '<details class="ns-auto-learn-log" style="margin-top:1em;">' +
+      '<summary class="ns-auto-learn-log__summary" style="cursor:pointer;font-weight:600;">' +
+      _("Detection log (0)") +
+      "</summary>" +
+      '<p class="cbi-value-description">' +
+      _("Probe history: direct access, Zapret, failed checks. These domains are not routed through NetShift.") +
+      "</p>" +
+      '<div style="margin-bottom:0.5em;">' +
+      '<button type="button" class="cbi-button cbi-button-remove" data-action="clear-log">' +
+      _("Clear log") +
+      "</button>" +
+      "</div>" +
+      '<div class="ns-auto-learn-domains__log"></div>' +
+      "</details>" +
       "</div>"
     );
   };

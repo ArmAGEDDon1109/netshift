@@ -5,6 +5,12 @@
 # This file is sourced from /usr/bin/netshift, so log() is available.
 
 SB_EXT_ARCH_SUFFIX=""
+# How the selected asset has to be unpacked: "tarball" for the generic
+# linux-<arch>.tar.gz releases, "openwrt-package" for the OpenWrt .ipk (a tar.gz
+# holding data.tar.gz). Set by updates_resolve_sing_box_extended_arch_suffix.
+SB_EXT_ASSET_KIND="tarball"
+# Human-readable reason why no compatible build could be selected ("" otherwise).
+SB_EXT_ARCH_ERROR=""
 UPDATES_SING_BOX_EXTENDED_REPO="shtorm-7/sing-box-extended"
 
 # Async component-action job state. State lives on tmpfs (/var/run): it survives
@@ -75,7 +81,7 @@ updates_backup_is_complete() {
 #
 # State object contract (STABLE — consumed by the frontend, task-008):
 #   { success, running, component, action, message, pid,
-#     started_at, updated_at, exit_code, version, latest_version }
+#     started_at, updated_at, exit_code, version, latest_version, build }
 #   * running state : running:true,  success:true,  exit_code:null
 #   * finished state: running:false, success/version/message parsed from the
 #     worker's captured stdout JSON, exit_code from the worker's $?.
@@ -120,7 +126,8 @@ updates_job_status_response() {
         --arg message "$message" \
         '{success: $success, running: $running, component: "sing_box",
           action: "", message: $message, pid: null, started_at: 0,
-          updated_at: 0, exit_code: null, version: "", latest_version: ""}'
+          updated_at: 0, exit_code: null, version: "", latest_version: "",
+          warning: "", build: ""}'
 }
 
 # Returns a monotonic-ish wall clock as an integer (0 on failure).
@@ -160,7 +167,7 @@ updates_write_running_job_state() {
         '{success: true, running: true, component: $component,
           action: $action, message: "Component action is running",
           pid: $pid, started_at: $started_at, updated_at: $started_at,
-          exit_code: null, version: "", latest_version: ""}' \
+          exit_code: null, version: "", latest_version: "", warning: "", build: ""}' \
         >"$tmp_file" && mv "$tmp_file" "$state_file"
     rc=$?
 
@@ -345,9 +352,12 @@ updates_write_finished_job_state() {
 
     if updates_extract_worker_json "$output_file" "$json_file"; then
         # Worker JSON shape: {success, message?, version?, current_version?,
-        # latest_version?, status?}. Surface what is present; fall back
-        # sensibly. success also derives from a zero exit code if the worker
-        # JSON omitted it.
+        # latest_version?, status?, warning?, build?}. Surface what is present;
+        # fall back sensibly — build is the lite installer's elf/compressed
+        # flavour. success also derives from a zero exit code if the
+        # worker JSON omitted it. warning is a problem the user has to act on
+        # whatever the outcome (the stable core switch reports a pin left in
+        # the apk world this way).
         jq -nc \
             --slurpfile worker "$json_file" \
             --arg component "$component" \
@@ -365,7 +375,9 @@ updates_write_finished_job_state() {
                 updated_at: $updated_at,
                 exit_code: $exit_code,
                 version: ($w.version // $w.current_version // ""),
-                latest_version: ($w.latest_version // "")}' \
+                latest_version: ($w.latest_version // ""),
+                warning: ($w.warning // ""),
+                build: ($w.build // "")}' \
             >"$tmp_file" && mv "$tmp_file" "$state_file"
         rc=$?
         rm -f "$tmp_file" "$json_file" "$output_file" 2>/dev/null
@@ -387,7 +399,7 @@ updates_write_finished_job_state() {
         '{success: false, running: false, component: $component,
           action: $action, message: $message, pid: null, started_at: 0,
           updated_at: $updated_at, exit_code: $exit_code, version: "",
-          latest_version: ""}' \
+          latest_version: "", warning: "", build: ""}' \
         >"$tmp_file" && mv "$tmp_file" "$state_file"
     rc=$?
 
@@ -481,10 +493,135 @@ updates_read_openwrt_release_value() {
     sed -n "s/^${key}='\(.*\)'/\1/p" /etc/openwrt_release 2>/dev/null | head -n 1
 }
 
-# Resolves the sing-box-extended release asset arch suffix into SB_EXT_ARCH_SUFFIX.
-# Returns 1 if the architecture is unsupported.
+# Echoes the CPU feature tokens from /proc/cpuinfo ("Features : half thumb ..."),
+# or nothing when the kernel does not expose them.
+updates_read_cpu_features() {
+    sed -n 's/^Features[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | head -n 1
+}
+
+# True when the space-separated feature list $2 contains the token $1.
+updates_cpu_has_feature() {
+    case " $2 " in
+    *" $1 "*) return 0 ;;
+    esac
+
+    return 1
+}
+
+# Selects the sing-box-extended build for a 32-bit ARM host. Sets
+# SB_EXT_ARCH_SUFFIX + SB_EXT_ASSET_KIND, or SB_EXT_ARCH_ERROR and returns 1
+# when no build compatible with this CPU exists.
+#
+# Every Go build of sing-box needs floating point HARDWARE, and which one it
+# needs is fixed at compile time:
+#   * GOARM=7 — the generic "armv7" asset — requires VFPv3/VFPv4. On an ARMv7
+#     core without them the hard-float binary dies immediately (the reported
+#     "Illegal instruction" on the Asus RT-AC88U / Broadcom BCM5301X, whose
+#     /proc/cpuinfo lists "half thumb fastmult edsp tls" and no vfp token).
+#   * GOARM=6 — the generic "armv6" asset — requires VFPv1/VFPv2, so it does NOT
+#     rescue such a CPU either (runtime.checkgoarm exits when HWCAP_VFP is 0).
+#   * GOARM=5 is pure software floating point and runs on any of them, but
+#     shtorm-7 publishes it for OpenWrt targets only: the openwrt_<arch>
+#     packages are built by the OpenWrt SDK with the target's own GOARM, which
+#     is 5 for the no-VFP ARM targets (e.g. arm_cortex-a9 = bcm53xx). That is
+#     the build that "runs fine" on the reporter's router while every generic
+#     ARM asset fails.
+# So a CPU with no FPU at all is served by the OpenWrt package asset, which is
+# also a tar.gz we can unpack (see updates_extract_sing_box_binary).
+#
+# $1 is the host arch (armv7* / armv6*), used as the default when the CPU
+# feature list cannot be read — unknown hardware keeps the build it got before
+# this check existed, so an upgrade never changes a working router.
+#
+# sing_box_extended_arm_build (settings, default "auto") is the escape hatch for
+# a misdetected CPU: "armv7"/"armv6" force that tarball, "openwrt" forces the
+# OpenWrt package asset, "auto" (and anything else, including an option that is
+# absent because the router was upgraded from an older NetShift) detects. The
+# option is read WITH a default, and an absent one only ever means "detect".
+updates_sing_box_extended_arm_asset() {
+    local host_arch="$1"
+    local features forced distrib_arch
+
+    SB_EXT_ASSET_KIND="tarball"
+    SB_EXT_ARCH_ERROR=""
+
+    config_get forced "settings" "sing_box_extended_arm_build" "auto"
+
+    case "$forced" in
+    armv7)
+        SB_EXT_ARCH_SUFFIX="armv7"
+        return 0
+        ;;
+    armv6)
+        SB_EXT_ARCH_SUFFIX="armv6"
+        return 0
+        ;;
+    openwrt)
+        distrib_arch="$(updates_read_openwrt_release_value "DISTRIB_ARCH")"
+        if [ -z "$distrib_arch" ]; then
+            SB_EXT_ARCH_ERROR="sing_box_extended_arm_build is set to openwrt but DISTRIB_ARCH is unknown"
+            return 1
+        fi
+        SB_EXT_ASSET_KIND="openwrt-package"
+        SB_EXT_ARCH_SUFFIX="$distrib_arch"
+        return 0
+        ;;
+    esac
+
+    features="$(updates_read_cpu_features)"
+    if [ -z "$features" ]; then
+        case "$host_arch" in
+        armv6*) SB_EXT_ARCH_SUFFIX="armv6" ;;
+        *) SB_EXT_ARCH_SUFFIX="armv7" ;;
+        esac
+        return 0
+    fi
+
+    case "$host_arch" in
+    armv6*)
+        # ARMv6 hosts keep the armv6 asset they always got; only a CPU without
+        # any floating point hardware needs the OpenWrt build instead.
+        if updates_cpu_has_feature "vfp" "$features"; then
+            SB_EXT_ARCH_SUFFIX="armv6"
+            return 0
+        fi
+        ;;
+    *)
+        if updates_cpu_has_feature "vfpv3" "$features" ||
+            updates_cpu_has_feature "vfpv3d16" "$features" ||
+            updates_cpu_has_feature "vfpv4" "$features"; then
+            SB_EXT_ARCH_SUFFIX="armv7"
+            return 0
+        fi
+
+        if updates_cpu_has_feature "vfp" "$features"; then
+            SB_EXT_ARCH_SUFFIX="armv6"
+            return 0
+        fi
+        ;;
+    esac
+
+    distrib_arch="$(updates_read_openwrt_release_value "DISTRIB_ARCH")"
+    if [ -z "$distrib_arch" ]; then
+        SB_EXT_ARCH_ERROR="this CPU has no floating point hardware, so it cannot run any generic ARM build, and DISTRIB_ARCH is unknown so the OpenWrt build cannot be selected"
+        return 1
+    fi
+
+    updates_log "CPU has no floating point hardware; using the OpenWrt ($distrib_arch) sing-box-extended package instead of the generic ARM tarball" "warn"
+    SB_EXT_ASSET_KIND="openwrt-package"
+    SB_EXT_ARCH_SUFFIX="$distrib_arch"
+    return 0
+}
+
+# Resolves the sing-box-extended release asset arch suffix into SB_EXT_ARCH_SUFFIX
+# (plus SB_EXT_ASSET_KIND / SB_EXT_ARCH_ERROR, see
+# updates_sing_box_extended_arm_asset). Returns 1 if the architecture is
+# unsupported or no build compatible with the CPU exists.
 updates_resolve_sing_box_extended_arch_suffix() {
     local host_arch distrib_arch
+
+    SB_EXT_ASSET_KIND="tarball"
+    SB_EXT_ARCH_ERROR=""
 
     host_arch="$(uname -m 2>/dev/null || true)"
     distrib_arch="$(updates_read_openwrt_release_value "DISTRIB_ARCH")"
@@ -496,8 +633,7 @@ updates_resolve_sing_box_extended_arch_suffix() {
 
     case "$host_arch" in
     aarch64) SB_EXT_ARCH_SUFFIX="arm64" ;;
-    armv7*) SB_EXT_ARCH_SUFFIX="armv7" ;;
-    armv6*) SB_EXT_ARCH_SUFFIX="armv6" ;;
+    armv7* | armv6*) updates_sing_box_extended_arm_asset "$host_arch" || return 1 ;;
     x86_64) SB_EXT_ARCH_SUFFIX="amd64" ;;
     i386 | i686) SB_EXT_ARCH_SUFFIX="386" ;;
     mips) SB_EXT_ARCH_SUFFIX="mips-softfloat" ;;
@@ -542,15 +678,16 @@ updates_http_get_once() {
     return 1
 }
 
-# Fetches the sing-box-extended GitHub releases JSON (echoes to stdout).
-# Tries a direct request first, then falls back through the VPN service proxy
-# (the router's own IP is often rate-limited or geo-blocked by GitHub). The
-# response is validated to be a JSON ARRAY: GitHub returns an OBJECT like
+# Fetches a GitHub releases JSON array (echoes to stdout). Tries a direct
+# request first, then falls back through the VPN service proxy (the router's
+# own IP is often rate-limited or geo-blocked by GitHub). The response is
+# validated to be a JSON ARRAY: GitHub returns an OBJECT like
 # {"message":"API rate limit exceeded ..."} on 403/429, which must NOT be
 # mistaken for a releases list.
-updates_fetch_sing_box_extended_releases() {
+updates_fetch_github_releases() {
+    local repo="$1"
     local url response proxy
-    url="https://api.github.com/repos/${UPDATES_SING_BOX_EXTENDED_REPO}/releases?per_page=30"
+    url="https://api.github.com/repos/${repo}/releases?per_page=30"
 
     response="$(updates_http_get_once "$url" "")"
     if updates_response_is_release_array "$response"; then
@@ -569,6 +706,11 @@ updates_fetch_sing_box_extended_releases() {
     fi
 
     return 1
+}
+
+# Fetches the sing-box-extended GitHub releases JSON (echoes to stdout).
+updates_fetch_sing_box_extended_releases() {
+    updates_fetch_github_releases "$UPDATES_SING_BOX_EXTENDED_REPO"
 }
 
 # Returns 0 only if the given body parses as a non-empty JSON array (a releases
@@ -618,6 +760,25 @@ updates_extended_asset_url() {
     local rel="$1"
     local suffix url
 
+    if [ "$SB_EXT_ASSET_KIND" = "openwrt-package" ]; then
+        # The .ipk is used even on apk systems: it is a plain tar.gz that busybox
+        # tar can stream (see updates_extract_sing_box_binary), while the apk v3
+        # container cannot be unpacked without apk-tools itself. The payload is
+        # the same GOARM=5 binary either way.
+        suffix="openwrt_${SB_EXT_ARCH_SUFFIX}.ipk"
+        url="$(printf '%s' "$rel" | jq -r --arg s "$suffix" '
+            .assets // []
+            | map(select(.name != null and (.name | endswith($s))))
+            | .[0].browser_download_url // empty
+        ' 2>/dev/null)"
+        if [ -n "$url" ]; then
+            printf '%s' "$url"
+            return 0
+        fi
+
+        return 1
+    fi
+
     if updates_system_uses_musl; then
         suffix="linux-${SB_EXT_ARCH_SUFFIX}-musl.tar.gz"
         url="$(printf '%s' "$rel" | jq -r --arg s "$suffix" '
@@ -643,6 +804,61 @@ updates_extended_asset_url() {
     fi
 
     return 1
+}
+
+# Echoes the name of the member holding sing-box inside $1, or nothing when the
+# archive does not contain one. For the OpenWrt .ipk the binary sits one level
+# deeper (data.tar.gz -> ./usr/bin/sing-box), so the data member is what has to
+# be located here; updates_extract_sing_box_binary unpacks the rest.
+updates_extended_archive_binary_member() {
+    local archive="$1"
+
+    if [ "$SB_EXT_ASSET_KIND" = "openwrt-package" ]; then
+        tar -tzf "$archive" 2>/dev/null | grep -E '(^|/)data\.tar\.gz$' | sed -n '1p'
+        return 0
+    fi
+
+    tar -tzf "$archive" 2>/dev/null | grep -E '(^|/)sing-box$' | sed -n '1p'
+}
+
+# Writes the sing-box binary from the downloaded archive $1 to $2.
+#
+# Disk-space note: both layouts are unpacked as STREAMS, so the only copy that
+# ever reaches disk is the binary being installed — the same rule the rest of
+# this installer follows (tmpfs holds the archive and the backup; the overlay is
+# too small for a second copy).
+#
+# Returns non-zero when nothing usable was written: an archive without a
+# sing-box member, or an extraction that produced an empty file.
+updates_extract_sing_box_binary() {
+    local archive="$1"
+    local dest="$2"
+    local data_member member
+
+    rm -f "$dest"
+
+    if [ "$SB_EXT_ASSET_KIND" = "openwrt-package" ]; then
+        data_member="$(updates_extended_archive_binary_member "$archive")"
+        [ -n "$data_member" ] || return 1
+
+        # OpenWrt's buildroot writes the payload as ./usr/bin/sing-box; the
+        # unprefixed form is tried as well so a differently built package file
+        # does not turn into a silent empty install.
+        for member in "./usr/bin/sing-box" "usr/bin/sing-box"; do
+            tar -xzf "$archive" -O "$data_member" 2>/dev/null |
+                tar -xzO -f - "$member" > "$dest" 2>/dev/null
+            [ -s "$dest" ] && return 0
+            rm -f "$dest"
+        done
+
+        return 1
+    fi
+
+    member="$(updates_extended_archive_binary_member "$archive")"
+    [ -n "$member" ] || return 1
+
+    tar -xzf "$archive" -O "$member" > "$dest" 2>/dev/null
+    [ -s "$dest" ]
 }
 
 # Downloads a URL to a file path (curl, fall back to wget). Returns 0 on success.
@@ -938,6 +1154,86 @@ updates_install_sing_box_extended() {
     return "$rc"
 }
 
+# ── Leaving the lite variant: lite artifact backup/restore ────────
+#
+# A lite install (ours or a community manual one) leaves up to three files
+# next to /usr/bin/sing-box: the compressed core in
+# UPDATES_SING_BOX_LITE_CORE_BIN, the version snapshot in
+# NETSHIFT_CORE_VERSION_CACHE and the community orphan
+# /etc/sing-box-version.cache. Switching to the stock or the full extended
+# core must not leave them behind — the compressed core alone is ~10 MB of
+# the tiny overlay — and the lite reinstall replaces them anyway. The three
+# helpers below back them up into the caller's tmpfs dir (fixed filenames),
+# remove the live copies and put them back on a rollback, so a failed swap
+# always ends with the same working layout it started from.
+
+# Backs up the lite artifacts into tmpfs dir $1 (fixed filenames) for the
+# rollback paths of the core swaps that leave the lite variant (and of a lite
+# reinstall). The core is copied with a byte-completeness gate — a truncated
+# copy would be restored as a segfaulting core — and its expected size is
+# recorded next to it for the restore-time re-check. The version caches are
+# regenerable (our wrapper rebuilds its snapshot on demand) and are always
+# copied best-effort. Returns 0 when there was nothing to back up or
+# everything copied cleanly; returns 1 when the compressed core exists but
+# its backup is NOT verified (the caller decides: the stock/extended
+# installs leave the core in place then, the lite install aborts).
+updates_lite_backup_artifacts() {
+    local dir="$1"
+
+    [ -d "$dir" ] || return 0
+
+    if [ -f "$NETSHIFT_CORE_VERSION_CACHE" ]; then
+        cp -p "$NETSHIFT_CORE_VERSION_CACHE" "$dir/lite-version.cache" 2>/dev/null || true
+    fi
+    if [ -f "$UPDATES_SING_BOX_LITE_ORPHAN_CACHE" ]; then
+        cp -p "$UPDATES_SING_BOX_LITE_ORPHAN_CACHE" "$dir/lite-orphan.cache" 2>/dev/null || true
+    fi
+
+    if [ -f "$UPDATES_SING_BOX_LITE_CORE_BIN" ]; then
+        if cp -p "$UPDATES_SING_BOX_LITE_CORE_BIN" "$dir/lite-core" 2>/dev/null &&
+            updates_verify_copy "$UPDATES_SING_BOX_LITE_CORE_BIN" "$dir/lite-core"; then
+            wc -c <"$UPDATES_SING_BOX_LITE_CORE_BIN" >"$dir/lite-core.size" 2>/dev/null || true
+            return 0
+        fi
+        rm -f "$dir/lite-core" "$dir/lite-core.size" 2>/dev/null || true
+        return 1
+    fi
+
+    return 0
+}
+
+# Removes the live lite artifacts: the compressed core, our version snapshot
+# and the community orphan cache.
+updates_lite_remove_artifacts() {
+    rm -f "$UPDATES_SING_BOX_LITE_CORE_BIN" "$NETSHIFT_CORE_VERSION_CACHE" \
+        "$UPDATES_SING_BOX_LITE_ORPHAN_CACHE" 2>/dev/null || true
+}
+
+# Restores the lite artifacts backed up into tmpfs dir $1 (rollback path of
+# a core swap that failed after updates_lite_backup_artifacts). The core is
+# restored only from a still byte-complete backup (size recorded at backup
+# time — the live file is gone by then); the caches are restored best-effort.
+updates_lite_restore_artifacts() {
+    local dir="$1"
+
+    [ -d "$dir" ] || return 0
+
+    if [ -f "$dir/lite-core" ] &&
+        updates_backup_is_complete "$dir/lite-core" "$(cat "$dir/lite-core.size" 2>/dev/null)"; then
+        if mv -f "$dir/lite-core" "$UPDATES_SING_BOX_LITE_CORE_BIN" 2>/dev/null; then
+            chmod 0755 "$UPDATES_SING_BOX_LITE_CORE_BIN" 2>/dev/null || true
+        else
+            updates_log "Rollback: FAILED to restore the compressed lite core from backup" "error"
+        fi
+    fi
+    if [ -f "$dir/lite-version.cache" ]; then
+        cp -p "$dir/lite-version.cache" "$NETSHIFT_CORE_VERSION_CACHE" 2>/dev/null || true
+    fi
+    if [ -f "$dir/lite-orphan.cache" ]; then
+        cp -p "$dir/lite-orphan.cache" "$UPDATES_SING_BOX_LITE_ORPHAN_CACHE" 2>/dev/null || true
+    fi
+}
+
 # Downloads and installs sing-box-extended, replacing /usr/bin/sing-box.
 # Echoes a JSON result on stdout.
 #
@@ -971,8 +1267,13 @@ _updates_install_sing_box_extended_core() {
     fi
 
     if ! updates_resolve_sing_box_extended_arch_suffix; then
-        updates_log "Unsupported architecture for sing-box-extended" "error"
-        echo "{\"success\":false,\"message\":\"Unsupported architecture for sing-box-extended\"}"
+        if [ -n "$SB_EXT_ARCH_ERROR" ]; then
+            updates_log "No compatible sing-box-extended build: $SB_EXT_ARCH_ERROR" "error"
+            echo "{\"success\":false,\"message\":\"No sing-box-extended build compatible with this CPU: $SB_EXT_ARCH_ERROR\"}"
+        else
+            updates_log "Unsupported architecture for sing-box-extended" "error"
+            echo "{\"success\":false,\"message\":\"Unsupported architecture for sing-box-extended\"}"
+        fi
         return 1
     fi
 
@@ -1020,7 +1321,7 @@ _updates_install_sing_box_extended_core() {
         return 1
     fi
 
-    binary_path="$(tar -tzf "$archive" 2>/dev/null | grep -E '(^|/)sing-box$' | sed -n '1p')"
+    binary_path="$(updates_extended_archive_binary_member "$archive")"
     if [ -z "$binary_path" ]; then
         rm -rf "$tmp_dir"
         updates_log "sing-box binary not found in archive" "error"
@@ -1058,11 +1359,24 @@ _updates_install_sing_box_extended_core() {
         backup_cronet_size="$(wc -c < "$backup_cronet" 2>/dev/null)"
     fi
 
+    # Leaving the lite variant: back its extra artifacts (compressed core +
+    # version caches) up into this tmpfs dir and remove the live copies, so
+    # the swap and its post-install validation run on a system already free
+    # of lite leftovers. A core whose tmpfs backup could not be verified is
+    # left in place (a rolled-back switch must not find a restored wrapper
+    # without its core) and only reported; every rollback path below
+    # restores what was backed up.
+    if ! updates_lite_backup_artifacts "$tmp_dir"; then
+        updates_log "Could not back up the lite compressed core; leaving it in place" "warn"
+    else
+        updates_lite_remove_artifacts
+    fi
+
     # Free overlay space by removing the live binary BEFORE extracting, then
     # stream the new member straight onto the final path (never two binaries
     # on overlay at once). Restore from the tmpfs backup on any failure.
     rm -f /usr/bin/sing-box
-    if ! tar -xzf "$archive" -O "$binary_path" > /usr/bin/sing-box 2>/dev/null || [ ! -s /usr/bin/sing-box ]; then
+    if ! updates_extract_sing_box_binary "$archive" /usr/bin/sing-box; then
         rm -f /usr/bin/sing-box
         # Only restore from a backup that is still byte-complete — restoring a
         # truncated backup would install a segfaulting core as the "safe"
@@ -1074,6 +1388,7 @@ _updates_install_sing_box_extended_core() {
                 updates_log "Rollback: sing-box backup is corrupt/incomplete; NOT restoring to avoid installing a broken core" "error"
             fi
         fi
+        updates_lite_restore_artifacts "$tmp_dir"
         rm -rf "$tmp_dir"
         updates_log "Failed to extract sing-box-extended binary (out of space on overlay?)" "error"
         echo "{\"success\":false,\"message\":\"Failed to extract sing-box-extended binary (not enough free space on the router?)\"}"
@@ -1099,6 +1414,7 @@ _updates_install_sing_box_extended_core() {
                     updates_log "Rollback: libcronet.so backup is corrupt/incomplete; NOT restoring" "error"
                 fi
             fi
+            updates_lite_restore_artifacts "$tmp_dir"
             rm -rf "$tmp_dir"
             updates_log "Failed to extract libcronet.so" "error"
             echo "{\"success\":false,\"message\":\"Failed to extract libcronet.so\"}"
@@ -1130,6 +1446,7 @@ _updates_install_sing_box_extended_core() {
                 updates_log "Rollback: libcronet.so backup is corrupt/incomplete; NOT restoring" "error"
             fi
         fi
+        updates_lite_restore_artifacts "$tmp_dir"
         rm -rf "$tmp_dir"
         updates_log "Installed sing-box failed extended validation; previous binary restored" "error"
         echo "{\"success\":false,\"message\":\"Installed sing-box failed extended validation; previous binary restored\"}"
@@ -1197,13 +1514,72 @@ updates_install_sing_box_stable() {
 # The install result is checked (no silent "|| true" that always reports
 # success), and the outcome is validated to be a NON-extended build so a failed
 # downgrade is surfaced honestly instead of masquerading as success.
+# Reads the version straight from the binary this updater manages.
+#
+# The stable path cannot gate on get_sing_box_version() (helpers.sh): that one
+# resolves `sing-box` through PATH and falls back to the literal "1.0" when the
+# binary is missing or will not run, and "1.0" is not an extended build — so a
+# router left without a core would pass every "no longer extended" check below
+# and be reported as a successful switch. Mirrors the extended path's probe,
+# including LD_LIBRARY_PATH for the side-loaded libcronet.so.
+#
+# Prints the version; returns non-zero when there is no usable core. A binary
+# that exits non-zero is not a usable core whatever it printed (a crashing build
+# can still print a usage text).
+updates_probe_sing_box_version() {
+    local output version
+
+    [ -x "$UPDATES_SING_BOX_BIN" ] || return 1
+    output="$(LD_LIBRARY_PATH=/usr/lib "$UPDATES_SING_BOX_BIN" version 2>/dev/null)" || return 1
+    version="$(printf '%s\n' "$output" | head -n1 | awk '{print $NF}')"
+    [ -n "$version" ] || return 1
+
+    printf '%s\n' "$version"
+}
+
+# True only when a runnable, non-extended core is in place. "No core at all" is
+# a failure here, not a successful downgrade.
+updates_stable_core_landed() {
+    local version
+
+    version="$(updates_probe_sing_box_version)" || return 1
+    if is_sing_box_extended "$version"; then
+        return 1
+    fi
+
+    return 0
+}
+
+# Prints the stable path's JSON result once the package manager has run:
+# {success, <key>: <value>} plus "warning" when the apk world was left in a
+# state the user has to fix. The warning goes out on failures too: a switch
+# that was rolled back can still have changed the world. Built with jq because
+# the warning quotes world entries verbatim.
+updates_stable_result_json() {
+    local success="$1"
+    local key="$2"
+    local value="$3"
+
+    jq -nc \
+        --argjson success "$success" \
+        --arg key "$key" \
+        --arg value "$value" \
+        --arg warning "$UPDATES_APK_WORLD_WARNING" \
+        '{success: $success} + {($key): $value}
+         + (if $warning == "" then {} else {warning: $warning} end)'
+}
+
 _updates_install_sing_box_stable_core() {
-    local new_version installed=1
+    local new_version installed=1 world_entry
     local tmp_dir backup_binary="" backup_cronet=""
     local backup_binary_size="" backup_cronet_size=""
 
-    # Remove stale temp dirs from an interrupted earlier run (tmpfs is small).
-    rm -rf /tmp/netshift-sbstable.* 2>/dev/null
+    UPDATES_APK_WORLD_WARNING=""
+
+    # Remove stale temp dirs from an interrupted earlier run (tmpfs is small),
+    # including the package download directory: that one lives on flash, so a
+    # run killed mid-fetch would otherwise keep its package there for good.
+    rm -rf /tmp/netshift-sbstable.* "$UPDATES_APK_FETCH_DIR".* 2>/dev/null
 
     tmp_dir="$(mktemp -d /tmp/netshift-sbstable.XXXXXX 2>/dev/null)"
     if [ -z "$tmp_dir" ]; then
@@ -1241,14 +1617,39 @@ _updates_install_sing_box_stable_core() {
         backup_cronet_size="$(wc -c < "$backup_cronet" 2>/dev/null)"
     fi
 
+    # Leaving the lite variant: back its extra artifacts (compressed core +
+    # version caches) up into this tmpfs dir and remove the live copies, so
+    # the package manager run and the post-install validation below operate
+    # on a system already free of lite leftovers. A core whose tmpfs backup
+    # could not be verified is left in place (a rolled-back switch must not
+    # find a restored wrapper without its core) and only reported; every
+    # rollback path below restores what was backed up.
+    if ! updates_lite_backup_artifacts "$tmp_dir"; then
+        updates_log "Could not back up the lite compressed core; leaving it in place" "warn"
+    else
+        updates_lite_remove_artifacts
+    fi
+
     if command -v apk >/dev/null 2>&1; then
+        world_entry="$(updates_apk_world_entry sing-box)"
         updates_log "Updating apk package lists"
         apk update </dev/null >/dev/null 2>&1 || true
         updates_log "Installing stable sing-box via apk"
-        if ! apk add --allow-downgrade sing-box </dev/null >/dev/null 2>&1; then
-            # apk fix is a best-effort recovery; its result still decides success.
-            apk fix sing-box </dev/null >/dev/null 2>&1 || installed=0
+        # apk-tools 3 has no --allow-downgrade. `apk fix --reinstall` rewrites the
+        # package files in place, but when the installed build is no longer in
+        # the feed index (the feed was rebuilt since) it skips the package and
+        # still exits 0 ("[APK unavailable, skipped]"). So check that the core
+        # actually changed, and fall back to the package file from the feed.
+        if ! apk fix --reinstall sing-box </dev/null >/dev/null 2>&1 ||
+            ! updates_stable_core_landed; then
+            updates_apk_reinstall_sing_box_from_file "$tmp_dir" || installed=0
         fi
+        # Whichever route the install took, and whether it landed or not, the
+        # world must not be left pinning a build. Problems here are reported
+        # through UPDATES_APK_WORLD_WARNING and do not decide whether the core
+        # switched: the checks below do, including the case where the fixup's
+        # `apk del` took the core with it.
+        updates_apk_settle_sing_box_world "$world_entry"
     elif command -v opkg >/dev/null 2>&1; then
         updates_log "Updating opkg package lists"
         opkg update </dev/null >/dev/null 2>&1 || true
@@ -1267,23 +1668,31 @@ _updates_install_sing_box_stable_core() {
         # Package install failed (it may have already removed/half-replaced the
         # binary). Restore the tmpfs backup so a working core remains.
         updates_stable_rollback "$backup_binary" "$backup_cronet" "$backup_binary_size" "$backup_cronet_size"
+        updates_lite_restore_artifacts "$tmp_dir"
         rm -rf "$tmp_dir"
         updates_log "Failed to install stable sing-box via package manager; previous binary restored" "error"
-        echo "{\"success\":false,\"message\":\"Failed to install stable sing-box (package manager error); previous binary restored\"}"
+        updates_stable_result_json false message "Failed to install stable sing-box (package manager error); previous binary restored"
         return 1
     fi
 
-    updates_restart_netshift
-    new_version="$(get_sing_box_version)"
-
-    # Validate the rollback actually took effect: the running binary must no
-    # longer be an "extended" build. If it still is, the install did not land —
-    # restore the backup so the router keeps a known-good core.
+    # Validate the switch before restarting anything: there must be a runnable
+    # binary and it must no longer be an "extended" build. If the install did not
+    # land — restore the backup and leave the running NetShift alone.
+    new_version="$(updates_probe_sing_box_version || true)"
+    if [ -z "$new_version" ]; then
+        updates_stable_rollback "$backup_binary" "$backup_cronet" "$backup_binary_size" "$backup_cronet_size"
+        updates_lite_restore_artifacts "$tmp_dir"
+        rm -rf "$tmp_dir"
+        updates_log "Stable install reported success but no runnable sing-box is in place; previous binary restored" "error"
+        updates_stable_result_json false message "No runnable sing-box after the install (previous binary restored)"
+        return 1
+    fi
     if is_sing_box_extended "$new_version"; then
         updates_stable_rollback "$backup_binary" "$backup_cronet" "$backup_binary_size" "$backup_cronet_size"
+        updates_lite_restore_artifacts "$tmp_dir"
         rm -rf "$tmp_dir"
         updates_log "Stable install reported success but sing-box is still extended ($new_version); previous binary restored" "error"
-        echo "{\"success\":false,\"message\":\"sing-box is still the extended build after install; rollback did not take effect (previous binary restored)\"}"
+        updates_stable_result_json false message "sing-box is still the extended build after install; rollback did not take effect (previous binary restored)"
         return 1
     fi
 
@@ -1294,11 +1703,154 @@ _updates_install_sing_box_stable_core() {
         rm -f "$UPDATES_LIBCRONET_LIB" 2>/dev/null || true
     fi
 
-    # Drop the backup only now that the install is confirmed good.
+    # Drop the backup only now that the install is confirmed good, and before
+    # the restart regenerates and checks the sing-box config: the backup is a
+    # full copy of the extended binary held in RAM (tmpfs).
     rm -rf "$tmp_dir"
+    updates_restart_netshift
     updates_log "Stable sing-box installed: ${new_version:-unknown}"
-    echo "{\"success\":true,\"version\":\"$new_version\"}"
+    # A world warning does not make this a failed install: the core did switch.
+    # It still has to reach the user, not just the log.
+    updates_stable_result_json true version "$new_version"
     return 0
+}
+
+# Prints the apk world entry for package $1 exactly as it is written in the
+# world file, or nothing when the package is not a world member. Covers every
+# constraint form apk accepts — bare name, "name=1.2-r1", "name><Q1...",
+# "name@tag", "!name" — because an entry that is not recognised here ends up
+# treated as "sing-box was not in the world" and silently dropped.
+# $1 is used as part of a regex, so call it with literal package names only.
+updates_apk_world_entry() {
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$UPDATES_APK_WORLD" 2>/dev/null |
+        grep -E "^!?$1([@<>=~].*)?$" | head -n1
+}
+
+# Records a problem with the apk world for the stable path's JSON result.
+updates_apk_world_warn() {
+    UPDATES_APK_WORLD_WARNING="$1"
+    updates_log "$1" "error"
+}
+
+# Leaves the sing-box entry of the apk world as it was before the switch, minus
+# any build-hash pin ("sing-box><Q1...").
+#
+# Installing a package file pins its build hash, and that pin then silently
+# blocks every later `apk upgrade sing-box`. NetShift's installer never writes
+# one for sing-box (the core comes in as a dependency), so a hash pin that is
+# already there before the switch is a leftover of an earlier run that could not
+# drop it (see below), and it is not an entry to keep either. An entry that
+# cannot be put back — a version pin such as "sing-box=1.13.21-r1" is rejected
+# as soon as the feed moved on ("breaks: world[sing-box=1.13.21-r1]") — is
+# reported, but the hash pin still goes.
+#
+# `apk del sing-box` is the only way to drop an entry, and it also removes
+# reverse dependencies that are not world members themselves: on a router where
+# `netshift` is not in the world, it purges NetShift along with the package. So
+# the del is attempted only while NetShift is a world member, plain or pinned;
+# "!netshift" is an exclusion, not a member.
+#
+# Never undoes the core switch: every problem is reported through
+# UPDATES_APK_WORLD_WARNING, which the caller puts into its JSON result. Returns
+# 0 when the world ended up as intended.
+updates_apk_settle_sing_box_world() {
+    local target="$1"
+    local current
+
+    case "$target" in
+    'sing-box><'*) target="" ;;
+    esac
+
+    current="$(updates_apk_world_entry sing-box)"
+    if [ "$current" = "$target" ]; then
+        return 0
+    fi
+
+    case "$(updates_apk_world_entry netshift)" in
+    "" | '!'*)
+        updates_apk_world_warn "apk world pins sing-box as '${current:-none}'; the pin was left in place because 'netshift' is not a world entry and 'apk del sing-box' would remove NetShift with it. Drop the pin from $UPDATES_APK_WORLD by hand to let 'apk upgrade' update the core again."
+        return 1
+        ;;
+    esac
+
+    if ! apk del sing-box </dev/null >/dev/null 2>&1; then
+        updates_apk_world_warn "Failed to drop the sing-box entry '${current:-none}' from $UPDATES_APK_WORLD; 'apk upgrade' will not update the core until it is removed."
+        return 1
+    fi
+    if [ ! -x /etc/init.d/netshift ]; then
+        updates_apk_world_warn "'apk del sing-box' removed the NetShift package although 'netshift' is a world entry; reinstall NetShift."
+        return 1
+    fi
+
+    if [ -n "$target" ] && ! apk add "$target" </dev/null >/dev/null 2>&1; then
+        updates_apk_world_warn "apk refused to restore the sing-box world entry '$target' (e.g. the feed no longer has that version); the build pin was dropped, put the entry back by hand if pinning matters."
+        return 1
+    fi
+
+    current="$(updates_apk_world_entry sing-box)"
+    if [ "$current" != "$target" ]; then
+        updates_apk_world_warn "apk world entry for sing-box is '${current:-none}' instead of '${target:-none}'; restore it by hand if upgrades or pinning matter."
+        return 1
+    fi
+
+    return 0
+}
+
+# Reinstalls sing-box from its package file in the configured feeds, for when
+# `apk fix --reinstall` skips it. The hash pin this leaves in the world is
+# dropped by the caller (updates_apk_settle_sing_box_world).
+#
+# `apk fetch` verifies the downloaded file against the signed feed index
+# (apk_extract_verify_identity), so --allow-untrusted on the install does not
+# weaken anything: feed packages carry no signature of their own, and without
+# the flag apk refuses the file outright. --force-reinstall is kept because the
+# extended core is side-loaded OVER the feed package's files: apk still records
+# that exact build as installed, so an install of the very same build is the
+# case the flag exists for. It is an OpenWrt patch on apk-tools 3 and is present
+# on the target.
+#
+# Returns non-zero when the package did not install; the caller then restores
+# the backup.
+updates_apk_reinstall_sing_box_from_file() {
+    local tmp_dir="$1"
+    local fetch_dir pkg="" rc=0
+
+    # Keep the package out of the tmpfs that already holds the backup of the
+    # extended core (~90 MB): on a 240 MB-RAM router the two together are an
+    # ENOSPC away from failing the fetch, i.e. from failing exactly where the
+    # rollback safety net is all that is left. The download goes to the flash
+    # the binary lives on instead, which is not free either: the overlay can be
+    # small (see the disk-space note on the extended path), and the package
+    # needs room there on top of the binary apk unpacks from it. When it does
+    # not fit, the fetch or the install fails and the caller restores the
+    # backup, so the router keeps a working core either way. Falls back to tmpfs
+    # only when that directory cannot be created.
+    fetch_dir="$(mktemp -d "$UPDATES_APK_FETCH_DIR.XXXXXX" 2>/dev/null)"
+    [ -n "$fetch_dir" ] || fetch_dir="$(mktemp -d "$tmp_dir/apk-fetch.XXXXXX" 2>/dev/null)"
+    if [ -z "$fetch_dir" ]; then
+        updates_log "Failed to create a directory for the sing-box package download" "error"
+        return 1
+    fi
+
+    if ! apk fetch sing-box -o "$fetch_dir" </dev/null >/dev/null 2>&1; then
+        rm -rf "$fetch_dir"
+        updates_log "Failed to fetch the stable sing-box package from the feeds" "error"
+        return 1
+    fi
+    for pkg in "$fetch_dir"/sing-box-*.apk; do
+        break
+    done
+    if [ ! -f "$pkg" ]; then
+        rm -rf "$fetch_dir"
+        updates_log "apk fetch left no sing-box package file behind" "error"
+        return 1
+    fi
+
+    updates_log "Installing stable sing-box from the feed package file"
+    apk add --allow-untrusted --force-reinstall "$pkg" </dev/null >/dev/null 2>&1 || rc=1
+    rm -rf "$fetch_dir"
+
+    return "$rc"
 }
 
 # Restores the tmpfs backup of /usr/bin/sing-box (and libcronet.so) into place.
@@ -1376,6 +1928,530 @@ updates_check_sing_box_extended() {
     # EXACT equality after the v-strip: the extended version string is the full
     # token (e.g. "1.13.12-extended-2.3.2"), so an exact match is correct and
     # avoids the accidental partial matches the old `case *"$tag"*` form allowed.
+    status="outdated"
+    if [ "$cur_norm" = "$tag_norm" ]; then
+        status="latest"
+    fi
+
+    # Emit BOTH versions v-stripped so the UI shows a consistent string.
+    echo "{\"success\":true,\"current_version\":\"$cur_norm\",\"latest_version\":\"$tag_norm\",\"status\":\"$status\"}"
+    return 0
+}
+
+# ── sing-box extended lite (third core variant) ──────────────────
+#
+# A lighter build of the same shtorm-7 fork for routers with little flash.
+# The features NetShift gates on (VLESS Encryption, XHTTP, vmess) are kept;
+# the heavy optional machinery is cut (tailscale, openvpn, gvisor, acme,
+# cloudflared, ...), so WireGuard works only through the system
+# implementation. Released from our own repository
+# (UPDATES_SING_BOX_LITE_REPO) with two assets per architecture:
+#   sing-box-extended-lite-linux-<arch>.tar.gz             (pure ELF)
+#   sing-box-extended-lite-linux-<arch>-compressed.tar.gz  (UPX + wrapper)
+# for exactly amd64, arm64, armv7, mips-softfloat and mipsle-softfloat, plus
+# a sha256sums.txt every install is verified against. The binary is static:
+# no musl variants, no OpenWrt packages.
+
+# Echoes the lite asset filename for arch suffix $1 and build flavour $2
+# ("elf" → the pure ELF tarball, "compressed" → the UPX one).
+updates_lite_asset_name() {
+    local suffix="$1"
+    local build="$2"
+
+    case "$build" in
+    compressed) printf 'sing-box-extended-lite-linux-%s-compressed.tar.gz' "$suffix" ;;
+    *) printf 'sing-box-extended-lite-linux-%s.tar.gz' "$suffix" ;;
+    esac
+}
+
+# Resolves the machine's arch suffix for a lite install and validates it
+# against the five builds the lite repo publishes. Leaves the suffix in
+# SB_EXT_ARCH_SUFFIX and the asset kind "tarball" (the lite repo has no
+# musl/ipk variants — the binary is static). Returns 1 with an English log
+# line when no lite build exists for this machine.
+updates_lite_resolve_arch() {
+    if ! updates_resolve_sing_box_extended_arch_suffix; then
+        if [ -n "$SB_EXT_ARCH_ERROR" ]; then
+            updates_log "Extended Lite is not available: $SB_EXT_ARCH_ERROR" "error"
+        else
+            updates_log "Extended Lite is not available for architecture '$(uname -m 2>/dev/null)'" "error"
+        fi
+        return 1
+    fi
+
+    case "$SB_EXT_ARCH_SUFFIX" in
+    amd64 | arm64 | armv7 | mips-softfloat | mipsle-softfloat) ;;
+    *)
+        updates_log "Extended Lite is not available for architecture '$SB_EXT_ARCH_SUFFIX' (the lite repository publishes no such build)" "error"
+        return 1
+        ;;
+    esac
+
+    SB_EXT_ASSET_KIND="tarball"
+    return 0
+}
+
+# Resolves the download URL for the lite asset of build flavour $2 in release
+# object $1 (arch suffix from SB_EXT_ARCH_SUFFIX). No musl/ipk fallbacks: the
+# lite repo publishes exactly one asset per arch per flavour.
+updates_lite_asset_url() {
+    local rel="$1"
+    local build="$2"
+    local name url
+
+    name="$(updates_lite_asset_name "$SB_EXT_ARCH_SUFFIX" "$build")"
+    url="$(printf '%s' "$rel" | jq -r --arg n "$name" '
+        .assets // []
+        | map(select(.name == $n))
+        | .[0].browser_download_url // empty
+    ' 2>/dev/null)"
+    [ -n "$url" ] || return 1
+
+    printf '%s' "$url"
+}
+
+# Resolves the sha256sums.txt download URL for release object $1.
+updates_lite_sums_url() {
+    local rel="$1"
+    local url
+
+    url="$(printf '%s' "$rel" | jq -r '
+        .assets // []
+        | map(select(.name == "sha256sums.txt"))
+        | .[0].browser_download_url // empty
+    ' 2>/dev/null)"
+    [ -n "$url" ] || return 1
+
+    printf '%s' "$url"
+}
+
+# Verifies downloaded file $3 against the sha256sums.txt in $1: finds the line
+# for asset filename $2 and compares the hash with busybox sha256sum output.
+# Returns 0 on a match, 1 on anything else (no line, an unparsable hash, a
+# mismatch, a missing sums file). Case-insensitive on the hex: sha256sum
+# prints lowercase and GitHub release sums are lowercase, but a mixed-case
+# producer must not fail the check.
+updates_lite_verify_sha256() {
+    local sums_file="$1"
+    local asset_name="$2"
+    local file="$3"
+    local expected actual
+
+    [ -s "$sums_file" ] || return 1
+
+    expected="$(awk -v n="$asset_name" '$2 == n {print $1; exit}' "$sums_file" 2>/dev/null | tr 'A-F' 'a-f')"
+    case "$expected" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+    *) return 1 ;;
+    esac
+
+    actual="$(sha256sum "$file" 2>/dev/null | awk '{print $1}' | tr 'A-F' 'a-f')"
+    [ -n "$actual" ] && [ "$actual" = "$expected" ]
+}
+
+# Echoes the lite build flavour to install: "elf" or "compressed". An
+# explicit UCI choice (netshift.@settings[0].sing_box_lite_build =
+# elf|compressed) always wins; anything else (including an absent option)
+# auto-detects. Auto: the pure ELF build is used when the effective free
+# space on / — free bytes plus whatever removing the current
+# /usr/bin/sing-box frees — is at least SB_LITE_ELF_MIN_FLASH_MB;
+# otherwise only the UPX-compressed build (and its wrapper) fits on the
+# overlay.
+updates_lite_select_build() {
+    local choice free_kb cur_bytes effective_kb
+
+    config_get choice "settings" "sing_box_lite_build" "auto"
+
+    case "$choice" in
+    elf) printf 'elf'; return 0 ;;
+    compressed) printf 'compressed'; return 0 ;;
+    esac
+
+    free_kb="$(df -Pk / 2>/dev/null | awk 'NR==2 {print $4}')"
+    case "$free_kb" in
+    '' | *[!0-9]*) free_kb=0 ;;
+    esac
+
+    cur_bytes=0
+    if [ -f "$UPDATES_SING_BOX_BIN" ]; then
+        cur_bytes="$(wc -c <"$UPDATES_SING_BOX_BIN" 2>/dev/null)"
+        case "$cur_bytes" in
+        '' | *[!0-9]*) cur_bytes=0 ;;
+        esac
+    fi
+
+    effective_kb=$((free_kb + (cur_bytes + 1023) / 1024))
+
+    if [ "$effective_kb" -ge $((SB_LITE_ELF_MIN_FLASH_MB * 1024)) ]; then
+        printf 'elf'
+    else
+        printf 'compressed'
+    fi
+}
+
+# Echoes the machine-readable warning code for a lite install of build
+# flavour $1, or nothing when there is no warning. A UPX binary unpacks
+# itself into memory at exec time, briefly needing more RAM than the process
+# ever uses afterwards — on a box with less than SB_LITE_RAM_WARN_MB of RAM
+# the UI should surface that. An unreadable RAM size never warns.
+updates_lite_build_warning() {
+    local build="$1"
+    local ram_mb
+
+    [ "$build" = "compressed" ] || return 0
+
+    ram_mb="$(get_ram_total_mb)"
+    [ "$ram_mb" -gt 0 ] && [ "$ram_mb" -lt "$SB_LITE_RAM_WARN_MB" ] || return 0
+
+    printf 'upx_ram_spike'
+}
+
+# Prints the lite install result JSON: {success, version} plus the build
+# flavour and the machine-readable warning code when applicable. Built with
+# jq so the values are quoted properly (no Oniguruma anywhere).
+updates_lite_result_json() {
+    local success="$1"
+    local version="$2"
+    local build="$3"
+    local warning="$4"
+
+    jq -nc \
+        --argjson success "$success" \
+        --arg version "$version" \
+        --arg build "$build" \
+        --arg warning "$warning" \
+        '{success: $success, version: $version}
+         + (if $build == "" then {} else {build: $build} end)
+         + (if $warning == "" then {} else {warning: $warning} end)'
+}
+
+# Writes the UPX-layout /usr/bin/sing-box wrapper. A lone `version` argument
+# is served from NETSHIFT_CORE_VERSION_CACHE (written at install time from
+# the validated banner), so a version probe never unpacks the compressed
+# core into RAM; with no readable cache the core is probed once and the
+# snapshot is rebuilt. Every other invocation execs the real core directly.
+# Paths are baked in via placeholders from the constants — the generated file
+# must be self-contained.
+updates_lite_write_wrapper() {
+    local dest="$1"
+    local tmp
+
+    tmp="${dest}.tmp.$$"
+    cat >"$tmp" << 'WRAPEOF'
+#!/bin/sh
+# Generated by NetShift: sing-box extended lite (UPX-compressed) wrapper.
+# Do not edit — regenerated on every lite install.
+CACHE='@CACHE@'
+CORE='@CORE@'
+STATEDIR='@STATEDIR@'
+if [ "$#" -eq 1 ] && [ "$1" = "version" ]; then
+    if [ -r "$CACHE" ]; then
+        cat "$CACHE"
+        exit 0
+    fi
+    if [ -x "$CORE" ]; then
+        out="$($CORE version 2>/dev/null)" || out=""
+        if [ -n "$out" ]; then
+            mkdir -p "$STATEDIR" 2>/dev/null
+            printf '%s\n' "$out" >"$CACHE" 2>/dev/null || true
+        fi
+        printf '%s\n' "$out"
+        exit 0
+    fi
+fi
+exec "$CORE" "$@"
+WRAPEOF
+    sed -i \
+        -e "s|@CACHE@|$NETSHIFT_CORE_VERSION_CACHE|g" \
+        -e "s|@CORE@|$UPDATES_SING_BOX_LITE_CORE_BIN|g" \
+        -e "s|@STATEDIR@|$NETSHIFT_STATE_DIR|g" \
+        "$tmp" || {
+        rm -f "$tmp" 2>/dev/null
+        return 1
+    }
+    mv -f "$tmp" "$dest" || {
+        rm -f "$tmp" 2>/dev/null
+        return 1
+    }
+    chmod 0755 "$dest"
+}
+
+# Public entry: install the extended lite core with the connectivity
+# self-heal preamble + the always-run restore epilogue around the real
+# worker. The architecture pre-flight is local and runs BEFORE any healing,
+# download or swap: a machine the lite repo cannot serve is refused without
+# touching anything.
+updates_install_sing_box_lite() {
+    local rc out json
+
+    if ! updates_lite_resolve_arch; then
+        echo "{\"success\":false,\"message\":\"Extended Lite is not available for the architecture of this router\"}"
+        return 1
+    fi
+
+    UPDATES_HEAL_RESOLV_REPLACED=0
+    UPDATES_HEAL_REDIRECT_DOWN=0
+
+    if ! updates_ensure_connectivity "extended"; then
+        # Heal failed: nothing was removed (the lite install only touches the
+        # core AFTER a reachable feed), so the router keeps its working core.
+        updates_restore_after_swap
+        updates_log "Aborting extended lite install: GitHub unreachable and self-heal failed (existing core left intact)" "error"
+        echo "{\"success\":false,\"message\":\"GitHub unreachable and connectivity self-heal failed; core switch aborted (existing sing-box left intact)\"}"
+        return 1
+    fi
+
+    out="/tmp/netshift-sblite-result.$$"
+    _updates_install_sing_box_lite_core >"$out" 2>/dev/null
+    rc=$?
+    json="$(cat "$out" 2>/dev/null)"
+    rm -f "$out" 2>/dev/null
+
+    updates_restore_after_swap
+
+    [ -n "$json" ] && printf '%s\n' "$json"
+    return "$rc"
+}
+
+# Downloads and installs the extended lite core: the ELF flavour replaces
+# /usr/bin/sing-box directly; the compressed flavour installs the UPX core
+# to UPDATES_SING_BOX_LITE_CORE_BIN plus the wrapper (and its version
+# snapshot cache) on /usr/bin/sing-box. Echoes a JSON result on stdout.
+#
+# Disk-space strategy mirrors the extended installer: the archive, the sums
+# and every backup live on tmpfs (/tmp); the live binary is removed before
+# the new member is stream-extracted onto its final path, so only ONE core
+# ever occupies the overlay; any failure restores the byte-completeness-
+# gated tmpfs backups (the previous binary AND the previous lite artifacts).
+_updates_install_sing_box_lite_core() {
+    local tmp_dir archive sums_file releases tag rel
+    local asset_url sums_url build asset_name
+    local backup_binary="" backup_binary_size=""
+    local validate_bin banner new_version
+
+    # Interruption-tolerant heal, as on the extended path: a half-written
+    # /usr/bin/sing-box must not be backed up (or restored) as a real core.
+    if [ -e "$UPDATES_SING_BOX_BIN" ] && {
+        [ ! -x "$UPDATES_SING_BOX_BIN" ] ||
+            ! LD_LIBRARY_PATH=/usr/lib "$UPDATES_SING_BOX_BIN" version >/dev/null 2>&1
+    }; then
+        updates_log "Found a non-runnable sing-box (likely a partial install); discarding it before reinstall" "warn"
+        rm -f "$UPDATES_SING_BOX_BIN"
+    fi
+
+    if ! updates_lite_resolve_arch; then
+        echo "{\"success\":false,\"message\":\"Extended Lite is not available for the architecture of this router\"}"
+        return 1
+    fi
+
+    releases="$(updates_fetch_github_releases "$UPDATES_SING_BOX_LITE_REPO")"
+    if [ -z "$releases" ]; then
+        updates_log "Failed to fetch sing-box extended lite releases (GitHub API unreachable or rate-limited; a proxy/VPN may be required)" "error"
+        echo "{\"success\":false,\"message\":\"Failed to fetch sing-box extended lite releases (GitHub API unreachable or rate-limited; try again later or enable a proxy)\"}"
+        return 1
+    fi
+
+    tag="$(updates_extended_release_tag "$releases")"
+    if [ -z "$tag" ]; then
+        updates_log "No stable sing-box extended lite release tag found in the GitHub response" "error"
+        echo "{\"success\":false,\"message\":\"No stable sing-box extended lite release found\"}"
+        return 1
+    fi
+
+    rel="$(updates_extended_release_object "$releases" "$tag")"
+
+    build="$(updates_lite_select_build)"
+    asset_url="$(updates_lite_asset_url "$rel" "$build")"
+    if [ -z "$asset_url" ]; then
+        updates_log "Failed to resolve the sing-box extended lite $build asset for arch $SB_EXT_ARCH_SUFFIX" "error"
+        echo "{\"success\":false,\"message\":\"Failed to resolve the sing-box extended lite asset\"}"
+        return 1
+    fi
+    sums_url="$(updates_lite_sums_url "$rel")"
+    if [ -z "$sums_url" ]; then
+        updates_log "The sing-box extended lite release $tag carries no sha256sums.txt; refusing an unverifiable download" "error"
+        echo "{\"success\":false,\"message\":\"The sing-box extended lite release carries no checksum file; install aborted\"}"
+        return 1
+    fi
+    asset_name="$(updates_lite_asset_name "$SB_EXT_ARCH_SUFFIX" "$build")"
+
+    # Remove stale temp dirs left behind by an interrupted earlier run
+    # (tmpfs is small; a leftover backup would fail the fresh backup below).
+    rm -rf /tmp/netshift-sblite.* 2>/dev/null
+
+    tmp_dir="$(mktemp -d /tmp/netshift-sblite.XXXXXX 2>/dev/null)"
+    if [ -z "$tmp_dir" ]; then
+        updates_log "Failed to create temporary directory" "error"
+        echo "{\"success\":false,\"message\":\"Failed to create temporary directory\"}"
+        return 1
+    fi
+
+    archive="$tmp_dir/sing-box-extended-lite.tar.gz"
+    sums_file="$tmp_dir/sha256sums.txt"
+    updates_log "Downloading sing-box extended lite $tag ($build, $SB_EXT_ARCH_SUFFIX)"
+    if ! updates_download_to_file "$asset_url" "$archive"; then
+        rm -rf "$tmp_dir"
+        updates_log "Failed to download sing-box extended lite" "error"
+        echo "{\"success\":false,\"message\":\"Failed to download sing-box extended lite\"}"
+        return 1
+    fi
+    if ! updates_download_to_file "$sums_url" "$sums_file"; then
+        rm -rf "$tmp_dir"
+        updates_log "Failed to download the sing-box extended lite checksum file" "error"
+        echo "{\"success\":false,\"message\":\"Failed to download the sing-box extended lite checksum file\"}"
+        return 1
+    fi
+    if ! updates_lite_verify_sha256 "$sums_file" "$asset_name" "$archive"; then
+        rm -rf "$tmp_dir"
+        updates_log "sha256 mismatch for $asset_name; the download is corrupt or the release changed under us" "error"
+        echo "{\"success\":false,\"message\":\"Checksum mismatch for the downloaded sing-box extended lite archive; install aborted\"}"
+        return 1
+    fi
+
+    # Back up the current binary (whatever variant it is) ON TMPFS, then the
+    # lite artifacts of a previous lite install. An unverifiable core backup
+    # aborts HERE: the live core has not been touched yet, so the working
+    # layout stays intact.
+    if [ -e "$UPDATES_SING_BOX_BIN" ]; then
+        backup_binary="$tmp_dir/sing-box.backup"
+        if ! cp -p "$UPDATES_SING_BOX_BIN" "$backup_binary" 2>/dev/null ||
+            ! updates_verify_copy "$UPDATES_SING_BOX_BIN" "$backup_binary"; then
+            rm -rf "$tmp_dir"
+            updates_log "Failed to backup current sing-box binary" "error"
+            echo "{\"success\":false,\"message\":\"Failed to backup current sing-box binary\"}"
+            return 1
+        fi
+        backup_binary_size="$(wc -c <"$backup_binary" 2>/dev/null)"
+    fi
+    if ! updates_lite_backup_artifacts "$tmp_dir"; then
+        rm -rf "$tmp_dir"
+        updates_log "Failed to backup the current lite core; aborting before touching anything" "error"
+        echo "{\"success\":false,\"message\":\"Failed to backup the current lite artifacts; install aborted\"}"
+        return 1
+    fi
+
+    # Fresh lite state: drop the live binary and all lite artifacts (the
+    # compressed flavour re-creates the core + wrapper + cache below; the ELF
+    # flavour has no use for any of them).
+    updates_lite_remove_artifacts
+    rm -f "$UPDATES_SING_BOX_BIN"
+
+    # Stream-extract the new member straight onto its final path: never two
+    # cores on the overlay at once. Restore from the tmpfs backups on any
+    # failure (binary AND lite artifacts — a rolled-back compressed install
+    # must not leave a wrapper without its core).
+    if [ "$build" = "compressed" ]; then
+        mkdir -p "$(dirname "$UPDATES_SING_BOX_LITE_CORE_BIN")" 2>/dev/null
+        validate_bin="$UPDATES_SING_BOX_LITE_CORE_BIN"
+    else
+        validate_bin="$UPDATES_SING_BOX_BIN"
+    fi
+    if ! updates_extract_sing_box_binary "$archive" "$validate_bin"; then
+        rm -f "$validate_bin"
+        if [ -n "$backup_binary" ]; then
+            if updates_backup_is_complete "$backup_binary" "$backup_binary_size"; then
+                mv -f "$backup_binary" "$UPDATES_SING_BOX_BIN"
+            else
+                updates_log "Rollback: sing-box backup is corrupt/incomplete; NOT restoring to avoid installing a broken core" "error"
+            fi
+        fi
+        updates_lite_restore_artifacts "$tmp_dir"
+        rm -rf "$tmp_dir"
+        updates_log "Failed to extract the sing-box extended lite binary (out of space on overlay?)" "error"
+        echo "{\"success\":false,\"message\":\"Failed to extract the sing-box extended lite binary (not enough free space on the router?)\"}"
+        return 1
+    fi
+    chmod 0755 "$validate_bin"
+
+    # Reclaim tmpfs before validation (the archive and sums are not needed
+    # anymore).
+    rm -f "$archive" "$sums_file"
+
+    # Validate by running the REAL binary (for the compressed flavour that is
+    # the core itself, NOT the wrapper): the version token must carry BOTH
+    # "extended" and the lite suffix, i.e. be a genuine lite build of the
+    # fork. A wrong asset (stock, full extended) is a full rollback.
+    banner="$(LD_LIBRARY_PATH=/usr/lib "$validate_bin" version 2>/dev/null)"
+    new_version="$(printf '%s\n' "$banner" | head -n1 | awk '
+        { for (i = 1; i < NF; i++) if ($i == "version") { print $(i + 1); exit }
+          print $NF }')"
+    case "$new_version" in
+    *extended*"$SB_LITE_SUFFIX"*) ;;
+    *)
+        rm -f "$validate_bin" "$NETSHIFT_CORE_VERSION_CACHE"
+        if [ -n "$backup_binary" ]; then
+            if updates_backup_is_complete "$backup_binary" "$backup_binary_size"; then
+                mv -f "$backup_binary" "$UPDATES_SING_BOX_BIN"
+            else
+                updates_log "Rollback: sing-box backup is corrupt/incomplete; NOT restoring to avoid installing a broken core" "error"
+            fi
+        fi
+        updates_lite_restore_artifacts "$tmp_dir"
+        rm -rf "$tmp_dir"
+        updates_log "Installed sing-box failed extended lite validation (got '${new_version:-nothing}'); previous core restored" "error"
+        echo "{\"success\":false,\"message\":\"Installed sing-box failed extended lite validation; previous core restored\"}"
+        return 1
+        ;;
+    esac
+
+    if [ "$build" = "compressed" ]; then
+        # The wrapper and its snapshot cache go in only after the core
+        # validated. The cache holds the validated banner, so `sing-box
+        # version` answers without unpacking the compressed core.
+        mkdir -p "$NETSHIFT_STATE_DIR" 2>/dev/null || true
+        printf '%s\n' "$banner" >"$NETSHIFT_CORE_VERSION_CACHE" 2>/dev/null || true
+        if ! updates_lite_write_wrapper "$UPDATES_SING_BOX_BIN"; then
+            rm -f "$UPDATES_SING_BOX_BIN" "$UPDATES_SING_BOX_LITE_CORE_BIN" \
+                "$NETSHIFT_CORE_VERSION_CACHE"
+            if [ -n "$backup_binary" ]; then
+                if updates_backup_is_complete "$backup_binary" "$backup_binary_size"; then
+                    mv -f "$backup_binary" "$UPDATES_SING_BOX_BIN"
+                else
+                    updates_log "Rollback: sing-box backup is corrupt/incomplete; NOT restoring to avoid installing a broken core" "error"
+                fi
+            fi
+            updates_lite_restore_artifacts "$tmp_dir"
+            rm -rf "$tmp_dir"
+            updates_log "Failed to write the sing-box extended lite wrapper; previous core restored" "error"
+            echo "{\"success\":false,\"message\":\"Failed to write the sing-box extended lite wrapper; previous core restored\"}"
+            return 1
+        fi
+    fi
+
+    rm -rf "$tmp_dir"
+    updates_restart_netshift
+    updates_log "Installed sing-box extended lite $new_version ($build)"
+    updates_lite_result_json true "$new_version" "$build" "$(updates_lite_build_warning "$build")"
+    return 0
+}
+
+# Checks whether a newer sing-box extended lite release is available.
+# Echoes a JSON status (latest|outdated) on stdout. Mirrors the extended
+# check: a single leading "v" is stripped off both sides and the strings
+# are then compared EXACTLY, with the current version taken as-is (its
+# "-lite" suffix included). A community manual install reporting a version
+# WITHOUT the suffix therefore honestly shows up as outdated, and updating
+# it lands on our build.
+updates_check_sing_box_lite() {
+    local current_version releases tag status cur_norm tag_norm
+
+    current_version="$(get_sing_box_version)"
+
+    releases="$(updates_fetch_github_releases "$UPDATES_SING_BOX_LITE_REPO")"
+    if [ -z "$releases" ]; then
+        echo "{\"success\":false,\"message\":\"Failed to fetch sing-box extended lite releases (GitHub API unreachable or rate-limited; try again later or enable a proxy)\"}"
+        return 1
+    fi
+
+    tag="$(updates_extended_release_tag "$releases")"
+    if [ -z "$tag" ]; then
+        echo "{\"success\":false,\"message\":\"No stable sing-box extended lite release found\"}"
+        return 1
+    fi
+
+    cur_norm="${current_version#v}"
+    tag_norm="${tag#v}"
+
     status="outdated"
     if [ "$cur_norm" = "$tag_norm" ]; then
         status="latest"
@@ -1926,11 +3002,17 @@ component_action() {
     sing_box:install_extended)
         updates_install_sing_box_extended
         ;;
+    sing_box:install_extended_lite)
+        updates_install_sing_box_lite
+        ;;
     sing_box:install_stable)
         updates_install_sing_box_stable
         ;;
     sing_box:check_update)
         updates_check_sing_box_extended
+        ;;
+    sing_box:check_update_lite)
+        updates_check_sing_box_lite
         ;;
     sing_box:check_update_stable)
         updates_check_sing_box_stable

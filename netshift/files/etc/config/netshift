@@ -2,11 +2,12 @@ config settings 'settings'
         option dns_type 'udp'
         option dns_server '77.88.8.8'
         option bootstrap_dns_server '77.88.8.8'
-        # Optional: force DNS upstream egress via this interface (e.g. br-lan for
-        # AdGuard on the LAN). When unset, a private dns_server / bootstrap IP
-        # auto-binds to the first source_network_interfaces entry (default br-lan).
-        #option dns_output_interface 'br-lan'
         option dns_rewrite_ttl '60'
+        # EDNS Client Subnet (RFC 7871): IP address or prefix sent with every
+        # DNS query so geo-distributed services resolve to the node closest to
+        # the client. Empty/unset disables it (this is the default, and configs
+        # upgraded from an older package have no such option at all).
+        option dns_client_subnet ''
         list source_network_interfaces 'br-lan'
         option enable_output_network_interface '0'
         #option output_network_interface 'wan'
@@ -17,24 +18,25 @@ config settings 'settings'
         option disable_quic '0'
         option update_interval '1d'
         option download_lists_via_proxy '0'
+        # sing-box-extended build to install on 32-bit ARM:
+        # auto | armv7 | armv6 | openwrt.
+        # 'auto' (the default, and also the behaviour when the option is absent,
+        # e.g. on a router upgraded from an older NetShift) picks the build the
+        # CPU can actually run: armv7 (needs VFPv3) where available, armv6 (needs
+        # VFP) on older cores, and on CPUs with no floating point hardware at all
+        # — e.g. Broadcom BCM5301X / Asus RT-AC88U, where the generic ARM builds
+        # die with "Illegal instruction" — the OpenWrt package built for this
+        # target (GOARM=5, software floating point).
+        # Force one of the four values only if the detection picks wrong.
+        option sing_box_extended_arm_build 'auto'
         #option dns_via_outbound '0'
         #option dns_outbound_section 'main'
-        # DNS-via-outbound routing mode (single|multi|paranoid, default single).
-        # single: legacy behaviour — only the main DNS server (SB_DNS_SERVER_TAG)
-        # carries a .detour key; bootstrap/fakeip stay direct. Omitting the
-        # option is byte-identical to 'single' (no regression).
-        # multi / paranoid: in addition to the .detour on the main server, a
-        # dns.rules[] entry with action=route, inbound=[dns-in] (127.0.0.42:53),
-        # outbound=<vpn-tag> is appended so any client query that reached
-        # sing-box via the dns-in inbound is forwarded through the chosen
-        # proxy outbound (recursive-aware multi-resolver proxy). single stays
-        # the safe default for byte-parity with task-014.
-        #option dns_outbound_mode 'single'
         option dont_touch_dhcp '0'
         option config_path '/etc/sing-box/config.json'
         option cache_path '/tmp/sing-box/cache.db'
         option log_level 'warn'
         option exclude_ntp '0'
+        option exclude_bittorrent '0'
         option shutdown_correctly '0'
         option block_doh '0'
         option enable_ipv6 '0'
@@ -84,6 +86,11 @@ config section 'main'
 #        # 'auto' preserves the default order. Ignored when subscription_user_agent
 #        # is set (an explicit UA always wins).
 #        #option subscription_format_preference 'auto'
+#        # How often THIS section's feeds are re-fetched: 30m | 1h | 3h | 6h |
+#        # 12h | 1d. Every section keeps its own schedule, wherever it sits in
+#        # the config; sections sharing a value share one cron job. A value
+#        # outside the list (a hand-edited UCI option, say '2h') is treated as
+#        # 1h with a warning instead of dropping the section from every job.
 #        option subscription_update_interval '1h'
 #        # Node grouping: off | country | prefix. 'country' clusters by leading
 #        # flag emoji; 'prefix' clusters by the first N codepoints of each node
@@ -127,9 +134,8 @@ config section 'main'
 #        #option urltest_tolerance '50'
 #        #option urltest_testing_url 'https://www.gstatic.com/generate_204'
 
-# Auto-learn: detect blocked/geo-blocked domains (LuCI "Auto-detection" tab).
-# Runtime domain list: /etc/netshift/auto_learned.json (avoids UCI restart storms).
-# Zapret: when zapret_enabled=1, 90-script.sh is copied to
+# Auto-detection: runtime domain list in /etc/netshift/auto_learned.json
+# (avoids UCI restart storms). When zapret_enabled=1, 90-script.sh is copied to
 # /opt/zapret/init.d/openwrt/custom.d/90-script.sh and Zapret is reloaded.
 config auto_learn 'auto_learn'
 	option enabled '0'

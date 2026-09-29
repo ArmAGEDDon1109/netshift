@@ -203,8 +203,38 @@ msgstr "Значение задержки не может быть пустым"
 msgid "Detect blocked or geo-blocked sites. Domains are stored outside UCI to avoid restarts on each add."
 msgstr "Определять заблокированные и geo-заблокированные сайты. Домены хранятся вне UCI, чтобы не перезапускать сервис при каждом добавлении."
 
+msgid "Automatically probe DNS queries from LAN clients (via dnsmasq logs): raw WAN (Zapret desync off), then Zapret desync, then route through NetShift. *.ru, Yandex (*.yandex.*, ya.ru), and local names (*.lan, *.local, *.home.arpa, unqualified hostnames, etc.) are ignored. Domains are stored outside UCI to avoid restarts on each add."
+msgstr "Автоматически проверять DNS-запросы клиентов LAN (логи dnsmasq): прямой WAN (Zapret desync выкл.), затем Zapret desync, затем маршрутизация через NetShift. Игнорируются *.ru, Яндекс (*.yandex.*, ya.ru) и локальные имена (*.lan, *.local, *.home.arpa, неквалифицированные hostname и т.п.). Домены хранятся вне UCI, чтобы не перезапускать сервис при каждом добавлении."
+
 msgid "Detected domains"
 msgstr "Обнаруженные домены"
+
+msgid "Routed through NetShift"
+msgstr "Маршрутизация через NetShift"
+
+msgid "Domains below are actively routed through the VPN tunnel."
+msgstr "Домены ниже реально идут через VPN-туннель."
+
+msgid "No domains routed through NetShift yet."
+msgstr "Пока нет доменов в маршрутизации NetShift."
+
+msgid "Detection log (%d)"
+msgstr "Журнал проверок (%d)"
+
+msgid "Detection log (0)"
+msgstr "Журнал проверок (0)"
+
+msgid "Detection log is empty."
+msgstr "Журнал проверок пуст."
+
+msgid "Probe history: direct access, Zapret, failed checks. These domains are not routed through NetShift."
+msgstr "История probe: прямой доступ, Zapret, неудачные проверки. Эти домены не идут через NetShift."
+
+msgid "Clear log"
+msgstr "Очистить журнал"
+
+msgid "Cleared detection log"
+msgstr "Журнал проверок очищен"
 
 msgid "Dev"
 msgstr "Dev"

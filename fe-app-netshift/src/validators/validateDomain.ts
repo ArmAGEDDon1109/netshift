@@ -29,3 +29,18 @@ export function validateDomain(
 
   return { valid: true, message: _('Valid') };
 }
+
+// Validates a domain entered in the domain-rule fields (Custom domains).
+// Unlike a DNS server address, a routing rule cannot match a URL path: the
+// backend keeps only the host and drops "example.com/path", so the path is
+// rejected here instead of being accepted and silently discarded.
+export function validateDomainRule(
+  domain: string,
+  allowDotTLD = false,
+): ValidationResult {
+  if (domain.includes('/')) {
+    return { valid: false, message: _('Invalid domain address') };
+  }
+
+  return validateDomain(domain, allowDotTLD);
+}

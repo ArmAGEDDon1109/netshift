@@ -7486,8 +7486,13 @@ AUTO_LEARN_DEFAULT_MAX_DOMAINS="500"
 AUTO_LEARN_CURL_TIMEOUT="7"
 AUTO_LEARN_DEFAULT_PROBE_DELAY="30"
 AUTO_LEARN_DEFAULT_ZAPRET_PROBE_DELAY="30"
+AUTO_LEARN_PROBE_COOLDOWN_SEC="300"
+AUTO_LEARN_DNS_LOG_TS_FILE="__NS_WORK__/state/auto_learn_dns_ts"
+AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC="0"
+AUTO_LEARN_SKIP_DOMAIN_SUFFIXES="ru lan local localdomain home internal private invalid test localhost home.arpa intranet corp"
 
 log() { :; }
+zapret_adapter_apply_now() { :; }
 
 config_get() {
     case "$2" in
@@ -7497,6 +7502,7 @@ config_get() {
                 zapret_enabled) eval "$1=\"\${AL_ZAPRET:-1}\"" ;;
                 target_section) eval "$1=\"\${AL_TARGET:-main}\"" ;;
                 max_domains) eval "$1=\"\${AL_MAX:-500}\"" ;;
+                zapret_probe_delay) eval "$1=\"\${AL_ZAPRET_DELAY:-30}\"" ;;
                 *) eval "$1=\"\${4:-}\"" ;;
             esac
             ;;
@@ -7575,6 +7581,34 @@ jq -n '{version: 3, rules: []}' > "$ruleset_filepath"
 auto_learn_add_netshift_domain "routed.example" "test"
 jq -e --arg d "routed.example" '.rules[] | .domain_suffix | index($d)' "$ruleset_filepath" >/dev/null \
     && echo 'autolearn-hotpatch-ruleset:OK' || echo 'autolearn-hotpatch-ruleset:FAIL'
+
+line='Sun Sep 28 01:00:00 2026 daemon.info dnsmasq[1]: query[A] blocked.site from 192.168.1.50'
+parsed="$(auto_learn_parse_dnsmasq_query_line "$line")"
+[ "$parsed" = "blocked.site" ] && echo 'autolearn-dns-parse:OK' || echo "autolearn-dns-parse:FAIL ($parsed)"
+
+auto_learn_domain_ready_for_probe "fresh.example" && echo 'autolearn-ready-new:OK' || echo 'autolearn-ready-new:FAIL'
+auto_learn_domain_ready_for_probe "example.com" && echo 'autolearn-ready-netshift:FAIL' || echo 'autolearn-ready-netshift:OK'
+
+rm -f "$ruleset_filepath"
+auto_learn_ensure_ruleset_file && [ -f "$ruleset_filepath" ] && echo 'autolearn-ensure-ruleset:OK' || echo 'autolearn-ensure-ruleset:FAIL'
+
+auto_learn_is_http_reachable_code "404" && echo 'autolearn-http-404-ok:OK' || echo 'autolearn-http-404-ok:FAIL'
+auto_learn_is_http_reachable_code "000" && echo 'autolearn-http-000-fail:FAIL' || echo 'autolearn-http-000-fail:OK'
+auto_learn_curl_tls_handshake_ok "0" && echo 'autolearn-tls-rc-0:OK' || echo 'autolearn-tls-rc-0:FAIL'
+auto_learn_curl_tls_handshake_ok "22" && echo 'autolearn-tls-rc-22:OK' || echo 'autolearn-tls-rc-22:FAIL'
+auto_learn_curl_tls_handshake_ok "52" && echo 'autolearn-tls-rc-52:OK' || echo 'autolearn-tls-rc-52:FAIL'
+auto_learn_curl_tls_handshake_ok "35" && echo 'autolearn-tls-rc-35-fail:FAIL' || echo 'autolearn-tls-rc-35-fail:OK'
+auto_learn_should_skip_candidate "1.2.3.4.in-addr.arpa" && echo 'autolearn-skip-arpa:OK' || echo 'autolearn-skip-arpa:FAIL'
+auto_learn_validate_domain "1.2.3.4.in-addr.arpa" && echo 'autolearn-reject-arpa:FAIL' || echo 'autolearn-reject-arpa:OK'
+auto_learn_should_skip_candidate "api.example.ru" && echo 'autolearn-skip-ru:OK' || echo 'autolearn-skip-ru:FAIL'
+auto_learn_should_skip_candidate "a.oneme.ru" && echo 'autolearn-skip-ru-sub:OK' || echo 'autolearn-skip-ru-sub:FAIL'
+auto_learn_should_skip_candidate "api2.ok.ru" && echo 'autolearn-skip-ru-ok:OK' || echo 'autolearn-skip-ru-ok:FAIL'
+auto_learn_should_skip_candidate "notblocked.com" && echo 'autolearn-skip-ru-negative:FAIL' || echo 'autolearn-skip-ru-negative:OK'
+auto_learn_should_skip_candidate "checkip.synology.com.lan" && echo 'autolearn-skip-lan:OK' || echo 'autolearn-skip-lan:FAIL'
+auto_learn_should_skip_candidate "router" && echo 'autolearn-skip-unqualified:OK' || echo 'autolearn-skip-unqualified:FAIL'
+auto_learn_should_skip_candidate "device.home.arpa" && echo 'autolearn-skip-home-arpa:OK' || echo 'autolearn-skip-home-arpa:FAIL'
+auto_learn_should_skip_candidate "api.messenger.yandex.net" && echo 'autolearn-skip-yandex:OK' || echo 'autolearn-skip-yandex:FAIL'
+auto_learn_should_skip_candidate "ya.ru" && echo 'autolearn-skip-ya-ru:OK' || echo 'autolearn-skip-ya-ru:FAIL'
 ALEOF
 
     sed -i "s|__NS_WORK__|$work|g" "$drv"
@@ -7592,6 +7626,25 @@ ALEOF
     echo "$out" | grep -q 'zapret-adapter-deploy:OK' && pass "zapret adapter deploy" || fail "zapret adapter deploy" "$out"
     echo "$out" | grep -q 'zapret-adapter-add-exclude:OK' && pass "zapret adapter exclude" || fail "zapret adapter exclude" "$out"
     echo "$out" | grep -q 'autolearn-hotpatch-ruleset:OK' && pass "auto-learn ruleset hot-patch" || fail "auto-learn ruleset hot-patch" "$out"
+    echo "$out" | grep -q 'autolearn-dns-parse:OK' && pass "auto-learn dnsmasq parse" || fail "auto-learn dnsmasq parse" "$out"
+    echo "$out" | grep -q 'autolearn-ready-new:OK' && pass "auto-learn probe readiness (new)" || fail "auto-learn probe readiness (new)" "$out"
+    echo "$out" | grep -q 'autolearn-ready-netshift:OK' && pass "auto-learn probe readiness (skip netshift)" || fail "auto-learn probe readiness (skip netshift)" "$out"
+    echo "$out" | grep -q 'autolearn-ensure-ruleset:OK' && pass "auto-learn ensure ruleset file" || fail "auto-learn ensure ruleset file" "$out"
+    echo "$out" | grep -q 'autolearn-http-404-ok:OK' && pass "auto-learn HTTP 404 is reachable" || fail "auto-learn HTTP 404 is reachable" "$out"
+    echo "$out" | grep -q 'autolearn-http-000-fail:OK' && pass "auto-learn HTTP 000 is blocked" || fail "auto-learn HTTP 000 is blocked" "$out"
+    echo "$out" | grep -q 'autolearn-tls-rc-0:OK' && pass "auto-learn TLS curl rc 0" || fail "auto-learn TLS curl rc 0" "$out"
+    echo "$out" | grep -q 'autolearn-tls-rc-52:OK' && pass "auto-learn TLS curl rc 52" || fail "auto-learn TLS curl rc 52" "$out"
+    echo "$out" | grep -q 'autolearn-tls-rc-35-fail:OK' && pass "auto-learn TLS curl rc 35 rejected" || fail "auto-learn TLS curl rc 35 rejected" "$out"
+    echo "$out" | grep -q 'autolearn-skip-arpa:OK' && pass "auto-learn skip in-addr.arpa" || fail "auto-learn skip in-addr.arpa" "$out"
+    echo "$out" | grep -q 'autolearn-reject-arpa:OK' && pass "auto-learn reject in-addr.arpa" || fail "auto-learn reject in-addr.arpa" "$out"
+    echo "$out" | grep -q 'autolearn-skip-ru:OK' && pass "auto-learn skip .ru" || fail "auto-learn skip .ru" "$out"
+    echo "$out" | grep -q 'autolearn-skip-ru-sub:OK' && pass "auto-learn skip nested .ru" || fail "auto-learn skip nested .ru" "$out"
+    echo "$out" | grep -q 'autolearn-skip-lan:OK' && pass "auto-learn skip .lan" || fail "auto-learn skip .lan" "$out"
+    echo "$out" | grep -q 'autolearn-skip-unqualified:OK' && pass "auto-learn skip unqualified hostname" || fail "auto-learn skip unqualified hostname" "$out"
+    echo "$out" | grep -q 'autolearn-skip-home-arpa:OK' && pass "auto-learn skip .home.arpa" || fail "auto-learn skip .home.arpa" "$out"
+    echo "$out" | grep -q 'autolearn-skip-yandex:OK' && pass "auto-learn skip yandex" || fail "auto-learn skip yandex" "$out"
+    echo "$out" | grep -q 'autolearn-skip-ya-ru:OK' && pass "auto-learn skip ya.ru" || fail "auto-learn skip ya.ru" "$out"
+    echo "$out" | grep -q 'autolearn-skip-ru-negative:OK' && pass "auto-learn non-.ru not skipped" || fail "auto-learn non-.ru not skipped" "$out"
     rm -rf "$work"
 }
 

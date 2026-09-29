@@ -6,11 +6,11 @@
   <img src="./docs/icon.png" alt="NetShift Extended" width="128" />
   <br>
   <br>
-  <a href="https://github.com/ArmAGEDDon1109/netshift-extended/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/ArmAGEDDon1109/netshift-extended/ci-main.yml?branch=main&label=CI">
+  <a href="https://github.com/ArmAGEDDon1109/netshift/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/ArmAGEDDon1109/netshift/ci-main.yml?branch=main&label=CI">
   </a>
-  <a href="https://github.com/ArmAGEDDon1109/netshift-extended/actions/workflows/build-packages.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/ArmAGEDDon1109/netshift-extended/build-packages.yml?branch=main&label=Build%20OWRT%2024%2F25">
+  <a href="https://github.com/ArmAGEDDon1109/netshift/actions/workflows/build-packages.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/ArmAGEDDon1109/netshift/build-packages.yml?branch=main&label=Build%20OWRT%2024%2F25">
   </a>
 </p>
 <h3 align="center"><a href="https://github.com/sagernet/sing-box">Sing-box</a> client for OpenWrt — extended fork</h3>
@@ -18,17 +18,108 @@
 
 ---
 
-**NetShift Extended** (`netshift-extended`) — форк [NetShift](https://github.com/yandexru45/netshift) / [podkop](https://github.com/itdoginfo/podkop): маршрутизатор трафика для OpenWrt на базе [sing-box](https://github.com/SagerNet/sing-box). Нужные домены и подсети — в туннель, остальное — напрямую.
+**NetShift Extended** ([fork](https://github.com/ArmAGEDDon1109/netshift)) — форк [NetShift](https://github.com/yandexru45/netshift) / [podkop](https://github.com/itdoginfo/podkop): маршрутизатор трафика для OpenWrt на базе [sing-box](https://github.com/SagerNet/sing-box). Нужные домены и подсети — в туннель, остальное — напрямую.
 
 **Чем отличается от upstream NetShift:**
 
 - **Локальный DNS** — dnsmasq перенаправляет запросы на sing-box (`127.0.0.42:53`), FakeIP `198.18.0.0/15`, split-DNS без утечек на WAN; опционально DNS через outbound.
-- **Автоопределение блокировок (auto-learn)** — если сайт недоступен напрямую: сначала исключение из Zapret v10 desync (`90-script.sh`), при повторной блокировке — hot-patch ruleset в NetShift **без перезапуска**; список доменов в LuCI (вкладка «Auto-detection»). При включении «Integrate with Zapret» скрипт копируется в `/opt/zapret/init.d/openwrt/custom.d/90-script.sh` и Zapret перезапускается.
+- **Автоопределение блокировок (auto-learn)** — мониторинг DNS LAN-клиентов, TLS-пробы и автоматический выбор: Zapret exclude → desync → NetShift hot-patch. Подробные схемы — в разделе [Автоопределение блокировок](#автоопределение-блокировок-auto-learn) ниже.
 
 Пакеты в OpenWrt по-прежнему называются `netshift` / `luci-app-netshift` (совместимость с конфигом `/etc/config/netshift`).
 
 > [!WARNING]
 > Проект находится в стадии бета-версии. Возможны ошибки, нестабильная работа и существенные изменения функциональности.
+
+---
+
+## Автоопределение блокировок (auto-learn)
+
+NetShift Extended следит за DNS-запросами **LAN-клиентов** (dnsmasq `logqueries`), для новых доменов запускает **TLS-пробу** (не HTTP 200 — именно handshake: Zapret часто ломает TLS, а TCP ещё «живой») и выбирает исход:
+
+| Стадия | Что произошло |
+|--------|----------------|
+| `resolved_direct` | TLS ок при **desync выкл** (домен в exclude Zapret) |
+| `resolved_desync` | TLS ок при **desync вкл** — обход DPI достаточен |
+| `resolved_zapret` | Desync ломает TLS, но **exclude восстанавливает** (постоянный exclude, без VPN) |
+| `netshift` | Прямой путь не работает — домен добавлен в ruleset **hot-patch без restart** |
+| `failed` | Недоступен ни напрямую, ни через туннель |
+
+Список и история — LuCI **Services → NetShift Extended → Auto-detection**. CLI: `netshift auto_learn probe <domain>`.
+
+### Схема: цикл auto-learn
+
+```mermaid
+flowchart TD
+    A["LAN-клиент резолвит домен"] --> B["dnsmasq + logqueries"]
+    B --> C["Монитор auto-learn\n(netshift __auto_learn_monitor)"]
+    C --> D{".ru / .lan / Yandex /\nлокальные имена?"}
+    D -->|да| SKIP["Пропуск"]
+    D -->|нет| E["① TLS: Zapret exclude\n(desync OFF)"]
+    E -->|OK| R1["resolved_direct\nexclude сохраняется"]
+    E -->|fail| F["② TLS: desync ON\n(домен не в exclude)"]
+    F -->|OK| R2["resolved_desync"]
+    F -->|fail| G["③ TLS: exclude снова\n(desync ломал TLS)"]
+    G -->|OK| R3["resolved_zapret\nпостоянный exclude"]
+    G -->|fail| H["④ TLS через NetShift\n(service proxy)"]
+    H -->|OK| R4["hot-patch ruleset\n→ netshift"]
+    H -->|fail| R5["failed"]
+```
+
+### Схема: интеграция с Zapret (`90-script.sh`)
+
+При включении **Integrate with Zapret** в LuCI NetShift копирует `90-script.sh` в Zapret и даёт API для exclude без ручного редактирования файлов:
+
+```mermaid
+sequenceDiagram
+    participant LuCI
+    participant NetShift
+    participant Script as 90-script.sh
+    participant Zapret as /etc/init.d/zapret
+    participant List as zapret-hosts-user-exclude.txt
+
+    LuCI->>NetShift: zapret_enabled = 1, Save
+    NetShift->>Script: deploy → /opt/zapret/.../custom.d/
+    NetShift->>Zapret: reload
+
+    Note over NetShift,Script: auto-learn probe
+    NetShift->>Script: add-exclude example.com
+    Script->>List: append domain
+    Script->>Zapret: reload
+    Note over List: домен не попадает под nfqws v10 desync
+```
+
+Файлы exclude:
+
+- `/opt/zapret/ipset/zapret-hosts-user-exclude.txt` — общий список (ручной + auto-learn)
+- `/opt/zapret/ipset/zapret-hosts-netshift-auto-exclude.txt` — только домены, добавленные NetShift
+
+### Схема: ручное исключение из Zapret (без auto-learn)
+
+Если auto-learn не нужен, домен можно исключить **вручную** — трафик к нему идёт в WAN **минуя nfqws desync**, NetShift не участвует:
+
+```mermaid
+flowchart LR
+    subgraph manual ["Ручной exclude (без NetShift auto-learn)"]
+        M["echo domain >>\nzapret-hosts-user-exclude.txt"] --> R["/etc/init.d/zapret reload"]
+        R --> P["Клиент → роутер → WAN\nбез v10 desync"]
+    end
+
+    subgraph compare ["Для сравнения: домен НЕ в exclude"]
+        C["Клиент"] --> RT["Роутер"] --> N["nfqws v10 desync"] --> W["WAN"]
+        N -.->|часто| X["TLS ломается,\nHTTP «кажется» живым"]
+    end
+```
+
+Тот же exclude-лист использует auto-learn на шагах ① и ③; отличие в том, что auto-learn **сам** находит домен по DNS, проверяет TLS и решает: оставить exclude, полагаться на desync или отправить в NetShift.
+
+<details>
+<summary><b>Ограничения auto-learn</b></summary>
+
+- Видны только DNS-запросы **LAN-клиентов** через dnsmasq; DNS самого роутера (например ACME на роутере) не мониторится — используйте `netshift auto_learn probe <domain>`.
+- Пробуется **точное имя** из DNS, не родительский домен (`acme-v02.api.letsencrypt.org`, не `letsencrypt.org`).
+- Игнорируются: `*.ru`, Yandex (`*.yandex.*`, `ya.ru`), `*.lan`, `*.local`, `*.home.arpa`, неполные hostname.
+
+</details>
 
 ---
 
@@ -104,7 +195,7 @@
 
 ```sh
 mv /etc/config/netshift /etc/config/netshift-070
-wget -O /etc/config/netshift https://raw.githubusercontent.com/ArmAGEDDon1109/netshift-extended/refs/heads/main/netshift/files/etc/config/netshift
+wget -O /etc/config/netshift https://raw.githubusercontent.com/ArmAGEDDon1109/netshift/refs/heads/main/netshift/files/etc/config/netshift
 # затем настроить заново через LuCI или UCI
 ```
 
@@ -117,7 +208,7 @@ wget -O /etc/config/netshift https://raw.githubusercontent.com/ArmAGEDDon1109/ne
 Для установки и обновления достаточно одного скрипта:
 
 ```sh
-sh <(wget -O - https://raw.githubusercontent.com/ArmAGEDDon1109/netshift-extended/refs/heads/main/install.sh)
+sh <(wget -O - https://raw.githubusercontent.com/ArmAGEDDon1109/netshift/refs/heads/main/install.sh)
 ```
 
 Интерфейс появится в LuCI: **Services → NetShift Extended**.

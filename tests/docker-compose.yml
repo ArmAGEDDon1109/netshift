@@ -8,11 +8,13 @@
 # Run specific test:
 #   docker compose -f tests/docker-compose.yml run --rm netshift-test <test-name>
 #
-# Test names: all, deps, syntax, config, helpers, jq, cm, sb, nft,
-#             nftv6, selmark, isolation, monfd, unsupported, textlist, diagnostics, subscription, fastest, insecure, rejected,
-#             jobstate, selfheal, dnsdetour, suburlopt, globalproxy, stablecheck,
-#             extcheck, netshiftcheck, latesttag, ghredirect, selfupdate,
-#             backupguard, cachepersist, wanautodetect, cachebackuplock
+# Test names: all, deps, syntax, config, helpers, jq, cm, sb, proxylink, nft,
+#             nftv6, selmark, isolation, monfd, unsupported, extgate, vlessenc, textlist,
+#             chunkcheck, diagnostics, subscription, fastest, insecure, rejected,
+#             jobstate, selfheal, dnsdetour, ecssubnet, suburlopt, subcron, globalproxy,
+#             bittorrent, stablecheck, extcheck, sbextarch, sbextlite, netshiftcheck, latesttag,
+#             ghredirect, selfupdate, backupguard, hotreload, cachepersist,
+#             domsep, domcase
 # ──────────────────────────────────────────────────────────────────
 
 services:

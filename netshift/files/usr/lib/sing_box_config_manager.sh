@@ -81,6 +81,33 @@ sing_box_cm_configure_dns() {
 }
 
 #######################################
+# Set the EDNS Client Subnet (ECS, RFC 7871) of the DNS section of a sing-box
+# JSON configuration. The value is an IP address or IP prefix that sing-box
+# appends as an edns0-subnet OPT record to every DNS query (a bare address gets
+# /32 or /128 appended), so geo-distributed services resolve to the node
+# closest to the client. It is a single top-level DNS field, which sing-box
+# applies to every server unless a server overrides it.
+# Callers MUST validate the value and only call this for a non-empty option: an
+# absent/empty option must leave the DNS section untouched, and sing-box
+# rejects the whole configuration for a malformed prefix.
+# Arguments:
+#   config: string (JSON), sing-box configuration to modify
+#   client_subnet: string, IP address or IP prefix, e.g. 203.0.113.0/24
+# Outputs:
+#   Writes updated JSON configuration to stdout
+# Example:
+#   CONFIG=$(sing_box_cm_set_dns_client_subnet "$CONFIG" "203.0.113.0/24")
+#######################################
+sing_box_cm_set_dns_client_subnet() {
+    local config="$1"
+    local client_subnet="$2"
+
+    echo "$config" | jq \
+        --arg client_subnet "$client_subnet" \
+        '.dns.client_subnet = $client_subnet'
+}
+
+#######################################
 # Add a UDP DNS server to the DNS section of a sing-box JSON configuration.
 # Arguments:
 #   config: string (JSON), sing-box configuration to modify
@@ -587,6 +614,10 @@ sing_box_cm_add_shadowsocks_outbound() {
 #   flow: string, flow setting (optional)
 #   network: string, network type (e.g., "tcp") (optional)
 #   packet_encoding: string, packet encoding method (optional)
+#   encryption: string, VLESS Encryption handshake (optional; the
+#       mlkem768x25519plus... value from the link's encryption= param).
+#       "none" and empty are omitted so configs for ordinary VLESS
+#       links stay byte-for-byte what they were.
 # Outputs:
 #   Writes updated JSON configuration to stdout
 # Example:
@@ -604,6 +635,7 @@ sing_box_cm_add_vless_outbound() {
     local flow="$6"
     local network="$7"
     local packet_encoding="$8"
+    local encryption="$9"
 
     echo "$config" | jq \
         --arg tag "$tag" \
@@ -613,6 +645,7 @@ sing_box_cm_add_vless_outbound() {
         --arg flow "$flow" \
         --arg network "$network" \
         --arg packet_encoding "$packet_encoding" \
+        --arg encryption "$encryption" \
         '.outbounds += [(
             {
               type: "vless",
@@ -624,6 +657,8 @@ sing_box_cm_add_vless_outbound() {
             + (if $flow != "" then {flow: $flow} else {} end)
             + (if $network != "" then {network: $network} else {} end)
             + (if $packet_encoding != "" then {packet_encoding: $packet_encoding} else {} end)
+            + (if $encryption != "" and $encryption != "none"
+               then {encryption: $encryption} else {} end)
         )]'
 }
 
@@ -881,42 +916,6 @@ sing_box_cm_set_ws_transport_for_outbound() {
                         + (if $early_data_header_name != "" then
                             {early_data_header_name: $early_data_header_name}
                         else {} end)
-                    )
-                }
-            else
-                .
-            end
-        )'
-}
-
-#######################################
-# Set HTTPUpgrade transport settings for an outbound in a sing-box JSON
-# configuration. sing-box's httpupgrade transport carries the Host header in a
-# top-level "host" field (unlike ws, which nests it under headers.Host). When
-# host is empty sing-box falls back to the server address, which matches the
-# common TLS-SNI==server deployment, so host is emitted only when provided.
-#######################################
-sing_box_cm_set_httpupgrade_transport_for_outbound() {
-    local config="$1"
-    local tag="$2"
-    local path="$3"
-    local host="$4"
-
-    [ -n "$path" ] || path="/"
-
-    echo "$config" | jq \
-        --arg tag "$tag" \
-        --arg path "$path" \
-        --arg host "$host" \
-        '.outbounds |= map(
-            if .tag == $tag then
-                . + {
-                    transport: (
-                        {
-                            type: "httpupgrade",
-                            path: $path
-                        }
-                        + (if $host != "" then {host: $host} else {} end)
                     )
                 }
             else
@@ -1285,22 +1284,45 @@ sing_box_cm_add_route_rule() {
     local inbound="$3"
     local outbound="$4"
 
-    # If a route rule with the same __service_tag already exists, do NOT add a
-    # duplicate. Use sing_box_cm_patch_route_rule to update the existing rule
-    # instead. This guards against accidental double-emission when a rule's
-    # tag is a well-known constant (SB_EXCLUSION_RULE_TAG, etc.) shared between
-    # the catch-all emission site and per-section list-patching sites.
     echo "$config" | jq \
         --arg service_tag "$SERVICE_TAG" \
         --arg tag "$tag" \
         --arg inbound "$inbound" \
         --arg outbound "$outbound" \
-        '.route.rules |= (if any(.[]; .[$service_tag] == $tag) then . else . + [{
+        '.route.rules += [{
             action: "route",
             inbound: $inbound,
             outbound: $outbound,
             $service_tag: $tag
-        }] end)'
+        }]'
+}
+
+#######################################
+# Add a route rule that sends BitTorrent traffic out directly instead of through
+# the tunnel. BitTorrent is matched on the SNIFFED protocol, so the caller MUST
+# insert this rule AFTER the sniff rule in route.rules: placed earlier, the
+# protocol is not known yet when the rule is evaluated and it silently never
+# matches.
+# Arguments:
+#   config: string (JSON), sing-box configuration to modify
+#   tag: string, identifier for the route rule
+#   inbound: string, inbound tag to match
+#   outbound: string, outbound tag the BitTorrent traffic is routed to
+# Outputs:
+#   Writes updated JSON configuration to stdout
+# Example:
+#   CONFIG=$(sing_box_cm_add_bittorrent_direct_route_rule "$CONFIG" "bittorrent-direct-rule-tag" "tproxy-in" "direct-out")
+#######################################
+sing_box_cm_add_bittorrent_direct_route_rule() {
+    local config="$1"
+    local tag="$2"
+    local inbound="$3"
+    local outbound="$4"
+
+    config=$(sing_box_cm_add_route_rule "$config" "$tag" "$inbound" "$outbound")
+    config=$(sing_box_cm_patch_route_rule "$config" "$tag" "protocol" "bittorrent")
+
+    echo "$config"
 }
 
 #######################################
@@ -1394,17 +1416,15 @@ sing_box_cm_add_reject_route_rule() {
     local tag="$2"
     local inbound="$3"
 
-    # See sing_box_cm_add_route_rule: dedup by __service_tag so a shared
-    # reject tag (SB_REJECT_RULE_TAG) never produces duplicate rules.
     echo "$config" | jq \
         --arg service_tag "$SERVICE_TAG" \
         --arg tag "$tag" \
         --arg inbound "$inbound" \
-        '.route.rules |= (if any(.[]; .[$service_tag] == $tag) then . else . + [{
+        '.route.rules += [{
             action: "reject",
             inbound: $inbound,
             $service_tag: $tag
-        }] end)'
+        }]'
 }
 
 #######################################

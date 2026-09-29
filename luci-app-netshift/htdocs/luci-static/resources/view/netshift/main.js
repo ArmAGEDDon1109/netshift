@@ -2,6 +2,7 @@
 "use strict";
 "require baseclass";
 "require fs";
+"require rpc";
 "require uci";
 "require ui";
 
@@ -97,6 +98,12 @@ function validateDomain(domain, allowDotTLD = false) {
     return { valid: false, message: _("Invalid domain address") };
   }
   return { valid: true, message: _("Valid") };
+}
+function validateDomainRule(domain, allowDotTLD = false) {
+  if (domain.includes("/")) {
+    return { valid: false, message: _("Invalid domain address") };
+  }
+  return validateDomain(domain, allowDotTLD);
 }
 
 // src/validators/validateDns.ts
@@ -791,11 +798,12 @@ async function getConfigSections() {
 }
 
 // src/netshift/methods/shell/callBaseMethod.ts
-async function callBaseMethod(method, args = [], command = "/usr/bin/netshift") {
+async function callBaseMethod(method, args = [], command = "/usr/bin/netshift", options = {}) {
   const response = await executeShellCommand({
     command,
     args: [method, ...args],
-    timeout: 15e3
+    timeout: 15e3,
+    nobatch: options.nobatch
   });
   if (response.stdout) {
     try {
@@ -863,6 +871,9 @@ function parseComponentActionStatus(stdout) {
     return null;
   }
 }
+function normalizeResultBuild(build) {
+  return build === "elf" || build === "compressed" ? build : void 0;
+}
 async function pollSingBoxComponentAction(fetchStatus, sleepFn = sleep, intervalMs = POLL_INTERVAL_MS, maxPolls = MAX_POLLS) {
   for (let poll = 0; poll < maxPolls; poll += 1) {
     const status = await fetchStatus();
@@ -876,7 +887,9 @@ async function pollSingBoxComponentAction(fetchStatus, sleepFn = sleep, interval
       return {
         success: Boolean(status.success),
         version: status.version,
-        message: status.message
+        message: status.message,
+        warning: status.warning || void 0,
+        build: normalizeResultBuild(status.build)
       };
     }
     await sleepFn(intervalMs);
@@ -941,7 +954,11 @@ var NetShiftShellMethods = {
   ]),
   getClashApiProxyLatency: async (tag) => callBaseMethod(
     NetShift.AvailableMethods.CLASH_API,
-    [NetShift.AvailableClashAPIMethods.GET_PROXY_LATENCY, tag, "5000"]
+    [NetShift.AvailableClashAPIMethods.GET_PROXY_LATENCY, tag, "5000"],
+    void 0,
+    // The dashboard probes many servers at once; batched, they would run
+    // one by one and all answer together.
+    { nobatch: true }
   ),
   getClashApiGroupLatency: async (tag) => callBaseMethod(
     NetShift.AvailableMethods.CLASH_API,
@@ -1046,8 +1063,9 @@ var NetShiftShellMethods = {
     });
   },
   // Sing-box update checks (sync) — STABLE task-017 contract:
-  //   component_action sing_box check_update        (extended)
-  //   component_action sing_box check_update_stable (stock)
+  //   component_action sing_box check_update         (extended)
+  //   component_action sing_box check_update_stable  (stock)
+  //   component_action sing_box check_update_lite    (extended lite)
   // → {success, current_version, latest_version, status}.
   singBoxCheckUpdate: async (action) => {
     const response = await executeShellCommand({
@@ -1170,6 +1188,93 @@ var NetShiftShellMethods = {
   }
 };
 
+// src/netshift/methods/custom/buildSubscriptionOutboundGroup.ts
+var SUBSCRIPTION_FEED_GROUP_TAG_PREFIX = "\u26A1 ";
+function isGroupType(item) {
+  const type = item?.value?.type?.toLowerCase();
+  return type === "urltest" || type === "selector";
+}
+function isUrlTest(item) {
+  return item?.value?.type?.toLowerCase() === "urltest";
+}
+function stripFeedPrefix(name) {
+  return name.startsWith(SUBSCRIPTION_FEED_GROUP_TAG_PREFIX) ? name.slice(SUBSCRIPTION_FEED_GROUP_TAG_PREFIX.length) : name;
+}
+function buildSubscriptionOutboundGroup(sectionName, proxies) {
+  const byCode = new Map(proxies.map((proxy) => [proxy.code, proxy]));
+  const selector = byCode.get(`${sectionName}-out`);
+  const legacyFastestCode = `${sectionName}-urltest-out`;
+  const fallbackUrltest = byCode.get(legacyFastestCode);
+  const selectedCode = selector?.value?.now;
+  function toOutbound(item, displayName) {
+    return {
+      code: item.code,
+      displayName: displayName ?? (item.value?.name || ""),
+      latency: item.value?.history?.[0]?.delay || 0,
+      type: item.value?.type || "",
+      selected: selectedCode === item.code
+    };
+  }
+  const selectorCodes = selector?.value?.all ?? [];
+  const selectorItems = selectorCodes.flatMap((code) => {
+    const item = byCode.get(code);
+    return item ? [item] : [];
+  });
+  if (selectorItems.length === 0 && fallbackUrltest) {
+    const fallbackOutbounds = (fallbackUrltest.value?.all ?? []).flatMap(
+      (code) => {
+        const item = byCode.get(code);
+        return item ? [toOutbound(item)] : [];
+      }
+    );
+    return {
+      withTagSelect: true,
+      code: selector?.code || sectionName,
+      displayName: sectionName,
+      outbounds: [
+        toOutbound(fallbackUrltest, _("Fastest")),
+        ...fallbackOutbounds
+      ]
+    };
+  }
+  const selectorCodeSet = new Set(selectorCodes);
+  const feedGroups = selectorItems.filter(
+    (item) => item.code !== legacyFastestCode && isUrlTest(item) && (item.value?.all?.length ?? 0) > 0 && (item.value?.all ?? []).every(
+      (code) => selectorCodeSet.has(code) && !isGroupType(byCode.get(code))
+    )
+  );
+  const groupedCodes = new Set(
+    feedGroups.flatMap((item) => [item.code, ...item.value?.all ?? []])
+  );
+  const topLevel = selectorItems.filter((item) => !groupedCodes.has(item.code)).map(
+    (item) => toOutbound(
+      item,
+      item.code === legacyFastestCode ? _("Fastest") : void 0
+    )
+  );
+  const subgroups = feedGroups.map((item) => ({
+    code: item.code,
+    displayName: stripFeedPrefix(item.value?.name || item.code),
+    outbounds: [
+      toOutbound(item, _("Fastest")),
+      ...(item.value?.all ?? []).flatMap((code) => {
+        const member = byCode.get(code);
+        return member ? [toOutbound(member)] : [];
+      })
+    ]
+  }));
+  return {
+    withTagSelect: true,
+    code: selector?.code || sectionName,
+    displayName: sectionName,
+    outbounds: [
+      ...topLevel.filter((item) => item.type.toLowerCase() === "urltest"),
+      ...topLevel.filter((item) => item.type.toLowerCase() !== "urltest")
+    ],
+    ...subgroups.length ? { subgroups } : {}
+  };
+}
+
 // src/netshift/methods/custom/getDashboardSections.ts
 async function getDashboardSections() {
   const configSections = await getConfigSections();
@@ -1288,68 +1393,7 @@ async function getDashboardSections() {
         };
       }
       if (section.proxy_config_type === "subscription") {
-        const selector = proxies.find(
-          (proxy) => proxy.code === `${section[".name"]}-out`
-        );
-        const fallbackUrltest = proxies.find(
-          (proxy) => proxy.code === `${section[".name"]}-urltest-out`
-        );
-        const selectorOutbounds = (selector?.value?.all ?? []).flatMap(
-          (code) => {
-            const item = proxies.find((proxy) => proxy.code === code);
-            if (!item) {
-              return [];
-            }
-            const isLegacyFastest = item.code === `${section[".name"]}-urltest-out`;
-            return [
-              {
-                code: item.code,
-                displayName: isLegacyFastest ? _("Fastest") : item?.value?.name || "",
-                latency: item?.value?.history?.[0]?.delay || 0,
-                type: item?.value?.type || "",
-                selected: selector?.value?.now === item.code
-              }
-            ];
-          }
-        );
-        const outbounds = [
-          ...selectorOutbounds.filter(
-            (item) => item.type?.toLowerCase() === "urltest"
-          ),
-          ...selectorOutbounds.filter(
-            (item) => item.type?.toLowerCase() !== "urltest"
-          )
-        ];
-        if (outbounds.length === 0 && fallbackUrltest) {
-          const fallbackOutbounds = (fallbackUrltest?.value?.all ?? []).map((code) => proxies.find((item) => item.code === code)).map((item) => ({
-            code: item?.code || "",
-            displayName: item?.value?.name || "",
-            latency: item?.value?.history?.[0]?.delay || 0,
-            type: item?.value?.type || "",
-            selected: selector?.value?.now === item?.code
-          }));
-          return {
-            withTagSelect: true,
-            code: selector?.code || section[".name"],
-            displayName: section[".name"],
-            outbounds: [
-              {
-                code: fallbackUrltest?.code || "",
-                displayName: _("Fastest"),
-                latency: fallbackUrltest?.value?.history?.[0]?.delay || 0,
-                type: fallbackUrltest?.value?.type || "",
-                selected: selector?.value?.now === fallbackUrltest?.code
-              },
-              ...fallbackOutbounds
-            ]
-          };
-        }
-        return {
-          withTagSelect: true,
-          code: selector?.code || section[".name"],
-          displayName: section[".name"],
-          outbounds
-        };
+        return buildSubscriptionOutboundGroup(section[".name"], proxies);
       }
     }
     if (section.connection_type === "vpn") {
@@ -1499,6 +1543,7 @@ var COMMAND_TIMEOUT = 1e4;
 var FETCH_TIMEOUT = 1e4;
 var BUTTON_FEEDBACK_TIMEOUT = 1e3;
 var DIAGNOSTICS_INITIAL_DELAY = 100;
+var SKELETON_SHIMMER_DURATION = 1600;
 var COMMAND_SCHEDULING = {
   P0_PRIORITY: 0,
   // Highest priority (no delay)
@@ -1698,7 +1743,10 @@ var initialDiagnosticStore = {
     sing_box_version: "loading",
     openwrt_version: "loading",
     device_model: "loading",
-    sing_box_extended: 0
+    sing_box_extended: 0,
+    sing_box_variant: "stock",
+    sing_box_lite_upx: 0,
+    sing_box_lite_supported: 0
   },
   diagnosticsActions: {
     restart: {
@@ -1826,12 +1874,15 @@ var initialManagerStore = {
     singBoxStockCheck: { loading: false },
     singBoxStockAction: { loading: false },
     singBoxExtendedCheck: { loading: false },
-    singBoxExtendedAction: { loading: false }
+    singBoxExtendedAction: { loading: false },
+    singBoxExtendedLiteCheck: { loading: false },
+    singBoxExtendedLiteAction: { loading: false }
   },
   managerChecks: {
     netshift: { status: null, latest_version: "" },
     sing_box_stock: { status: null, latest_version: "" },
-    sing_box_extended: { status: null, latest_version: "" }
+    sing_box_extended: { status: null, latest_version: "" },
+    sing_box_extended_lite: { status: null, latest_version: "" }
   }
 };
 
@@ -1953,7 +2004,8 @@ var initialStore = {
   sectionsWidget: {
     loading: true,
     failed: false,
-    latencyFetching: false,
+    latencyTestingSections: [],
+    latencyPendingOutbounds: [],
     data: []
   },
   ...initialDiagnosticStore,
@@ -2999,20 +3051,20 @@ function renderLoadingState() {
     style: "height: 127px"
   });
 }
+function renderSkeleton(style) {
+  const phase = Math.round(performance.now() % SKELETON_SHIMMER_DURATION);
+  return E("div", {
+    class: "skeleton",
+    style: `${style}; --skeleton-phase: -${phase}ms`
+  });
+}
 function renderDefaultState({
   section,
   onChooseOutbound,
   onTestLatency,
-  latencyFetching
+  latencyFetching,
+  pendingOutbounds
 }) {
-  function testLatency() {
-    if (section.withTagSelect) {
-      return onTestLatency(section.code);
-    }
-    if (section.outbounds.length) {
-      return onTestLatency(section.outbounds[0].code);
-    }
-  }
   function renderOutbound(outbound) {
     function getLatencyClass() {
       if (!outbound.latency) {
@@ -3040,7 +3092,7 @@ function renderDefaultState({
             { class: "pdk_dashboard-page__outbound-grid__item__type" },
             outbound.type
           ),
-          E(
+          pendingOutbounds.includes(outbound.code) ? renderSkeleton("width: 44px; height: 16px") : E(
             "div",
             { class: getLatencyClass() },
             outbound.latency ? `${outbound.latency}ms` : "N/A"
@@ -3059,9 +3111,9 @@ function renderDefaultState({
         },
         section.displayName
       ),
-      latencyFetching ? E("div", { class: "skeleton", style: "width: 99px; height: 28px" }) : renderButton({
+      latencyFetching ? renderSkeleton("width: 99px; height: 28px") : renderButton({
         text: _("Test latency"),
-        onClick: () => testLatency(),
+        onClick: () => onTestLatency(),
         classNames: ["dashboard-sections-grid-item-test-latency"]
       })
     ]),
@@ -3069,6 +3121,20 @@ function renderDefaultState({
       "div",
       { class: "pdk_dashboard-page__outbound-grid" },
       section.outbounds.map((outbound) => renderOutbound(outbound))
+    ),
+    ...(section.subgroups ?? []).map(
+      (subgroup) => E("div", { class: "pdk_dashboard-page__outbound-subgroup" }, [
+        E(
+          "div",
+          { class: "pdk_dashboard-page__outbound-subgroup__title" },
+          subgroup.displayName
+        ),
+        E(
+          "div",
+          { class: "pdk_dashboard-page__outbound-grid" },
+          subgroup.outbounds.map((outbound) => renderOutbound(outbound))
+        )
+      ])
     )
   ]);
 }
@@ -3193,7 +3259,8 @@ function render() {
           },
           onChooseOutbound: () => {
           },
-          latencyFetching: false
+          latencyFetching: false,
+          pendingOutbounds: []
         })
       )
     ]
@@ -3241,7 +3308,64 @@ async function fetchServicesInfo() {
   }
 }
 
+// src/netshift/tabs/dashboard/latency.ts
+var GROUP_TYPES = ["urltest", "selector"];
+function isGroup(outbound) {
+  return GROUP_TYPES.includes(outbound.type.toLowerCase());
+}
+function getAllOutbounds(section) {
+  return [
+    ...section.outbounds,
+    ...(section.subgroups ?? []).flatMap((subgroup) => subgroup.outbounds)
+  ];
+}
+function unique(codes) {
+  return [...new Set(codes.filter(Boolean))];
+}
+function getLatencyTargets(section) {
+  if (!section.withTagSelect) {
+    return { probe: unique([section.outbounds[0]?.code ?? ""]), groups: [] };
+  }
+  const outbounds = getAllOutbounds(section);
+  return {
+    probe: unique(
+      outbounds.filter((item) => !isGroup(item)).map((item) => item.code)
+    ),
+    groups: unique(outbounds.filter(isGroup).map((item) => item.code))
+  };
+}
+function setOutboundLatency(sections, code, latency) {
+  const update = (outbounds) => outbounds.map(
+    (outbound) => outbound.code === code ? { ...outbound, latency } : outbound
+  );
+  return sections.map((section) => ({
+    ...section,
+    outbounds: update(section.outbounds),
+    ...section.subgroups ? {
+      subgroups: section.subgroups.map((subgroup) => ({
+        ...subgroup,
+        outbounds: update(subgroup.outbounds)
+      }))
+    } : {}
+  }));
+}
+async function runWithConcurrency(items, limit, worker) {
+  const queue = [...items];
+  async function next() {
+    const item = queue.shift();
+    if (item === void 0) {
+      return;
+    }
+    await worker(item);
+    return next();
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, queue.length) }, () => next())
+  );
+}
+
 // src/netshift/tabs/dashboard/initController.ts
+var LATENCY_PROBE_CONCURRENCY = 8;
 async function fetchDashboardSections() {
   const prev = store.get().sectionsWidget;
   store.set({
@@ -3256,7 +3380,7 @@ async function fetchDashboardSections() {
   }
   store.set({
     sectionsWidget: {
-      latencyFetching: false,
+      ...store.get().sectionsWidget,
       loading: false,
       failed: !success,
       data
@@ -3343,37 +3467,41 @@ async function handleChooseOutbound(selector, tag) {
   await NetShiftShellMethods.setClashApiGroupProxy(selector, tag);
   await fetchDashboardSections();
 }
-async function handleTestGroupLatency(tag) {
-  store.set({
-    sectionsWidget: {
-      ...store.get().sectionsWidget,
-      latencyFetching: true
-    }
-  });
-  await NetShiftShellMethods.getClashApiGroupLatency(tag);
-  await fetchDashboardSections();
-  store.set({
-    sectionsWidget: {
-      ...store.get().sectionsWidget,
-      latencyFetching: false
-    }
-  });
+function updateSectionsWidget(update) {
+  const widget = store.get().sectionsWidget;
+  store.set({ sectionsWidget: { ...widget, ...update(widget) } });
 }
-async function handleTestProxyLatency(tag) {
-  store.set({
-    sectionsWidget: {
-      ...store.get().sectionsWidget,
-      latencyFetching: true
-    }
-  });
-  await NetShiftShellMethods.getClashApiProxyLatency(tag);
-  await fetchDashboardSections();
-  store.set({
-    sectionsWidget: {
-      ...store.get().sectionsWidget,
-      latencyFetching: false
-    }
-  });
+async function handleTestSectionLatency(section) {
+  const { probe, groups } = getLatencyTargets(section);
+  updateSectionsWidget((widget) => ({
+    latencyTestingSections: [...widget.latencyTestingSections, section.code],
+    latencyPendingOutbounds: [
+      ...widget.latencyPendingOutbounds,
+      ...probe,
+      ...groups
+    ]
+  }));
+  try {
+    await runWithConcurrency(probe, LATENCY_PROBE_CONCURRENCY, async (code) => {
+      const latency = await NetShiftShellMethods.getClashApiProxyLatency(code).then((response) => response.success && response.data?.delay || 0).catch(() => 0);
+      updateSectionsWidget((widget) => ({
+        data: setOutboundLatency(widget.data, code, latency),
+        latencyPendingOutbounds: widget.latencyPendingOutbounds.filter(
+          (item) => item !== code
+        )
+      }));
+    });
+    await fetchDashboardSections();
+  } finally {
+    updateSectionsWidget((widget) => ({
+      latencyTestingSections: widget.latencyTestingSections.filter(
+        (item) => item !== section.code
+      ),
+      latencyPendingOutbounds: widget.latencyPendingOutbounds.filter(
+        (item) => !probe.includes(item) && !groups.includes(item)
+      )
+    }));
+  }
 }
 async function renderSectionsWidget() {
   logger.debug("[DASHBOARD]", "renderSectionsWidget");
@@ -3393,7 +3521,8 @@ async function renderSectionsWidget() {
       },
       onChooseOutbound: () => {
       },
-      latencyFetching: sectionsWidget.latencyFetching
+      latencyFetching: false,
+      pendingOutbounds: []
     });
     return preserveScrollForPage(() => {
       container.replaceChildren(renderedWidget);
@@ -3404,13 +3533,11 @@ async function renderSectionsWidget() {
       loading: sectionsWidget.loading,
       failed: sectionsWidget.failed,
       section,
-      latencyFetching: sectionsWidget.latencyFetching,
-      onTestLatency: (tag) => {
-        if (section.withTagSelect) {
-          return handleTestGroupLatency(tag);
-        }
-        return handleTestProxyLatency(tag);
-      },
+      latencyFetching: sectionsWidget.latencyTestingSections.includes(
+        section.code
+      ),
+      pendingOutbounds: sectionsWidget.latencyPendingOutbounds,
+      onTestLatency: () => handleTestSectionLatency(section),
       onChooseOutbound: (selector, tag) => {
         handleChooseOutbound(selector, tag);
       }
@@ -3678,6 +3805,17 @@ var styles3 = `
     display: grid;
     grid-template-columns: repeat(var(--dashboard-grid-columns), 1fr);
     grid-gap: 10px;
+}
+
+.pdk_dashboard-page__outbound-subgroup {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: var(--ns-card-border-width) solid var(--ns-card-border);
+}
+
+.pdk_dashboard-page__outbound-subgroup__title {
+    color: var(--text-color-high);
+    font-weight: 600;
 }
 
 .pdk_dashboard-page__outbound-grid__item {
@@ -4412,6 +4550,14 @@ function renderWikiDisclaimer(kind) {
   ]);
 }
 
+// src/netshift/tabs/diagnostic/helpers/getSelectedOutbound.ts
+function getSelectedOutbound(section) {
+  return [
+    ...section.outbounds,
+    ...(section.subgroups ?? []).flatMap((subgroup) => subgroup.outbounds)
+  ].find((item) => item.selected);
+}
+
 // src/netshift/tabs/diagnostic/checks/runSectionsCheck.ts
 async function runSectionsCheck() {
   const { order, title, code } = DIAGNOSTICS_CHECKS_MAP.OUTBOUNDS;
@@ -4440,13 +4586,11 @@ async function runSectionsCheck() {
       async function getLatency() {
         if (section.withTagSelect) {
           const latencyGroup = await NetShiftShellMethods.getClashApiGroupLatency(section.code);
-          const selectedOutbound = section.outbounds.find(
-            (item) => item.selected
-          );
-          const isUrlTest = selectedOutbound?.type === "URLTest";
+          const selectedOutbound = getSelectedOutbound(section);
+          const isUrlTest2 = selectedOutbound?.type === "URLTest";
           const success3 = latencyGroup.success && !latencyGroup.data.message;
           if (success3) {
-            if (isUrlTest) {
+            if (isUrlTest2) {
               const latency2 = Object.values(latencyGroup.data).map((item) => item ? `${item}ms` : "n/a").join(" / ");
               return {
                 success: true,
@@ -4560,7 +4704,10 @@ async function fetchSystemInfo() {
       diagnosticsSystemInfo: {
         loading: false,
         ...systemInfo.data,
-        sing_box_extended: systemInfo.data.sing_box_extended === 1 ? 1 : 0
+        sing_box_extended: systemInfo.data.sing_box_extended === 1 ? 1 : 0,
+        sing_box_variant: systemInfo.data.sing_box_variant,
+        sing_box_lite_upx: systemInfo.data.sing_box_lite_upx === 1 ? 1 : 0,
+        sing_box_lite_supported: systemInfo.data.sing_box_lite_supported === 1 ? 1 : 0
       }
     });
   } else {
@@ -4573,7 +4720,10 @@ async function fetchSystemInfo() {
         sing_box_version: _("unknown"),
         openwrt_version: _("unknown"),
         device_model: _("unknown"),
-        sing_box_extended: 0
+        sing_box_extended: 0,
+        sing_box_variant: "stock",
+        sing_box_lite_upx: 0,
+        sing_box_lite_supported: 0
       }
     });
   }
@@ -5255,6 +5405,22 @@ function isSingBoxInstalled(systemInfo) {
   const version = systemInfo.sing_box_version;
   return Boolean(version) && version !== NOT_INSTALLED;
 }
+var SING_BOX_VARIANTS = [
+  "stock",
+  "extended",
+  "extended_lite"
+];
+function getSingBoxVariant(systemInfo) {
+  return SING_BOX_VARIANTS.includes(systemInfo.sing_box_variant) ? systemInfo.sing_box_variant : "stock";
+}
+function getSingBoxMutationWarningMessage(warning) {
+  if (warning === "upx_ram_spike") {
+    return _(
+      "UPX-compressed core: a RAM spike is possible at startup; on devices with less than 256 MB of RAM, enable zram swap"
+    );
+  }
+  return warning;
+}
 function getCheckTag(status) {
   if (!status) {
     return void 0;
@@ -5298,7 +5464,7 @@ function netshiftCard(systemInfo, check) {
   }
   return {
     key: "netshift",
-    title: _("NetShift Extended"),
+    title: "NetShift",
     version: normalizeCompiledVersion(systemInfo.netshift_version),
     installed: true,
     tag: getCheckTag(status),
@@ -5307,7 +5473,7 @@ function netshiftCard(systemInfo, check) {
 }
 function singBoxStockCard(systemInfo, check) {
   const installed = isSingBoxInstalled(systemInfo);
-  const isActive = installed && systemInfo.sing_box_extended === 0;
+  const isActive = installed && getSingBoxVariant(systemInfo) === "stock";
   const actions = [];
   if (isActive) {
     if (check.status === "outdated") {
@@ -5345,7 +5511,7 @@ function singBoxStockCard(systemInfo, check) {
 }
 function singBoxExtendedCard(systemInfo, check) {
   const installed = isSingBoxInstalled(systemInfo);
-  const isActive = installed && systemInfo.sing_box_extended === 1;
+  const isActive = installed && getSingBoxVariant(systemInfo) === "extended";
   const actions = [];
   if (isActive) {
     if (check.status === "outdated") {
@@ -5375,9 +5541,56 @@ function singBoxExtendedCard(systemInfo, check) {
   return {
     key: "sing_box_extended",
     title: "sing-box (extended)",
+    description: _("Extended core with all features (~105 MB)"),
     version: isActive ? systemInfo.sing_box_version : _("Not installed"),
     installed: isActive,
     tag: isActive ? getCheckTag(check.status) : getCheckTag("not_installed"),
+    actions
+  };
+}
+function singBoxExtendedLiteCard(systemInfo, check) {
+  const installed = isSingBoxInstalled(systemInfo);
+  const isActive = installed && getSingBoxVariant(systemInfo) === "extended_lite";
+  const supported = systemInfo.sing_box_lite_supported === 1;
+  const upx = systemInfo.sing_box_lite_upx === 1;
+  const actions = [];
+  if (isActive) {
+    if (check.status === "outdated") {
+      const latest = check.latest_version;
+      actions.push({
+        loadingKey: "singBoxExtendedLiteAction",
+        kind: "update",
+        text: latest ? _("Install %s").replace("%s", latest) : _("Update"),
+        backendAction: "install_extended_lite"
+      });
+    } else {
+      actions.push({
+        loadingKey: "singBoxExtendedLiteCheck",
+        kind: "check",
+        text: _("Check update"),
+        backendAction: "check_update_lite"
+      });
+    }
+  } else {
+    actions.push({
+      loadingKey: "singBoxExtendedLiteAction",
+      kind: "switch",
+      text: _("Switch to lite"),
+      backendAction: "install_extended_lite"
+    });
+  }
+  return {
+    key: "sing_box_extended_lite",
+    title: "sing-box (extended lite)",
+    description: _(
+      "Light build of the extended core for low-flash devices (~10 MB instead of ~105 MB)"
+    ),
+    version: isActive ? systemInfo.sing_box_version : _("Not installed"),
+    installed: isActive,
+    tag: isActive ? getCheckTag(check.status) : getCheckTag("not_installed"),
+    extraTag: isActive && upx ? { label: _("UPX"), kind: "warning" } : void 0,
+    note: !supported ? _("Not available for your architecture") : isActive && upx ? _("Compressed build: uses more RAM at startup") : void 0,
+    actionsDisabled: !supported,
     actions
   };
 }
@@ -5385,7 +5598,8 @@ function getComponentCards(systemInfo, checks) {
   return [
     netshiftCard(systemInfo, checks.netshift),
     singBoxStockCard(systemInfo, checks.sing_box_stock),
-    singBoxExtendedCard(systemInfo, checks.sing_box_extended)
+    singBoxExtendedCard(systemInfo, checks.sing_box_extended),
+    singBoxExtendedLiteCard(systemInfo, checks.sing_box_extended_lite)
   ];
 }
 
@@ -5400,7 +5614,10 @@ async function fetchSystemInfo2() {
       diagnosticsSystemInfo: {
         loading: false,
         ...systemInfo.data,
-        sing_box_extended: systemInfo.data.sing_box_extended === 1 ? 1 : 0
+        sing_box_extended: systemInfo.data.sing_box_extended === 1 ? 1 : 0,
+        sing_box_variant: systemInfo.data.sing_box_variant,
+        sing_box_lite_upx: systemInfo.data.sing_box_lite_upx === 1 ? 1 : 0,
+        sing_box_lite_supported: systemInfo.data.sing_box_lite_supported === 1 ? 1 : 0
       }
     });
   } else {
@@ -5413,7 +5630,10 @@ async function fetchSystemInfo2() {
         sing_box_version: _("unknown"),
         openwrt_version: _("unknown"),
         device_model: _("unknown"),
-        sing_box_extended: 0
+        sing_box_extended: 0,
+        sing_box_variant: "stock",
+        sing_box_lite_upx: 0,
+        sing_box_lite_supported: 0
       }
     });
   }
@@ -5463,9 +5683,8 @@ function getCheckToastMessage(status) {
 async function runSingBoxCheck2(component, button) {
   setActionLoading(button.loadingKey, true);
   try {
-    const parsed = await NetShiftShellMethods.singBoxCheckUpdate(
-      button.backendAction === "check_update_stable" ? "check_update_stable" : "check_update"
-    );
+    const checkAction = button.backendAction === "check_update_stable" || button.backendAction === "check_update_lite" ? button.backendAction : "check_update";
+    const parsed = await NetShiftShellMethods.singBoxCheckUpdate(checkAction);
     if (!parsed.success) {
       showToast(parsed.message || _("Failed to execute!"), "error");
       return;
@@ -5502,9 +5721,8 @@ async function runSingBoxMutation(component, button) {
   setActionLoading(button.loadingKey, true);
   showToast(_("Switching sing-box core, this may take a few minutes\u2026"), "info");
   try {
-    const result = await NetShiftShellMethods.singBoxComponentAction(
-      button.backendAction === "install_stable" ? "install_stable" : "install_extended"
-    );
+    const installAction = button.backendAction === "install_stable" || button.backendAction === "install_extended_lite" ? button.backendAction : "install_extended";
+    const result = await NetShiftShellMethods.singBoxComponentAction(installAction);
     if (result.success) {
       const changed = _("Sing-box core changed, version:");
       showToast(`${changed} ${result.version || ""}`.trim(), "success");
@@ -5513,6 +5731,14 @@ async function runSingBoxMutation(component, button) {
     } else {
       logger.error("[MANAGER]", "runSingBoxMutation failed", result);
       showToast(result.message || _("Failed to execute!"), "error");
+    }
+    if (result.warning) {
+      logger.warn("[MANAGER]", "runSingBoxMutation warning", result.warning);
+      showToast(
+        getSingBoxMutationWarningMessage(result.warning),
+        "warning",
+        15e3
+      );
     }
   } catch (error) {
     logger.error("[MANAGER]", "runSingBoxMutation failed", error);
@@ -5568,37 +5794,49 @@ function handleManagerAction(card, button) {
   }
   void runSingBoxMutation(card.key, button);
 }
-function renderComponentTag(card) {
-  if (!card.tag) {
-    return null;
-  }
+function renderComponentTag(tag) {
   return E(
     "span",
     {
       class: [
         "pdk_manager-page__component__tag",
-        card.tag.kind === "success" ? "pdk_manager-page__component__tag--success" : "",
-        card.tag.kind === "warning" ? "pdk_manager-page__component__tag--warning" : ""
+        tag.kind === "success" ? "pdk_manager-page__component__tag--success" : "",
+        tag.kind === "warning" ? "pdk_manager-page__component__tag--warning" : ""
       ].filter(Boolean).join(" ")
     },
-    card.tag.label
+    tag.label
   );
 }
 function renderComponentCard(card) {
   const managerActions = store.get().managerActions;
   const anyActionLoading = isAnyActionLoading();
   const systemInfoLoading = isSystemInfoLoading();
-  const tag = renderComponentTag(card);
+  const tags = [card.tag, card.extraTag].filter(
+    (tag) => Boolean(tag)
+  );
   const headerChildren = [
     E("b", { class: "pdk_manager-page__component__title" }, card.title)
   ];
-  if (tag) {
+  if (tags.length > 0) {
     headerChildren.push(
-      E("div", { class: "pdk_manager-page__component__status" }, [tag])
+      E("div", { class: "pdk_manager-page__component__status" }, [
+        ...tags.map(renderComponentTag)
+      ])
     );
   }
-  return E("div", { class: "card pdk_manager-page__component" }, [
-    E("div", { class: "pdk_manager-page__component__header" }, headerChildren),
+  const children = [
+    E("div", { class: "pdk_manager-page__component__header" }, headerChildren)
+  ];
+  if (card.description) {
+    children.push(
+      E(
+        "div",
+        { class: "pdk_manager-page__component__description" },
+        card.description
+      )
+    );
+  }
+  children.push(
     E("div", { class: "pdk_manager-page__component__version" }, [
       E(
         "span",
@@ -5620,12 +5858,18 @@ function renderComponentCard(card) {
           text: action.text,
           icon: action.kind === "check" || action.kind === "check_netshift" ? renderSearchIcon24 : renderRotateCcwIcon24,
           loading,
-          disabled: systemInfoLoading || anyActionLoading && !loading,
+          disabled: systemInfoLoading || card.actionsDisabled || anyActionLoading && !loading,
           onClick: () => handleManagerAction(card, action)
         });
       })
     )
-  ]);
+  );
+  if (card.note) {
+    children.push(
+      E("div", { class: "pdk_manager-page__component__note" }, card.note)
+    );
+  }
+  return E("div", { class: "card pdk_manager-page__component" }, children);
 }
 function renderManagerComponents() {
   const container = document.getElementById("pdk_manager-components");
@@ -5640,7 +5884,9 @@ function renderManagerComponents() {
       ),
       netshift_latest_version: diagnosticsSystemInfo.netshift_latest_version,
       sing_box_version: diagnosticsSystemInfo.sing_box_version,
-      sing_box_extended: diagnosticsSystemInfo.sing_box_extended
+      sing_box_variant: diagnosticsSystemInfo.sing_box_variant,
+      sing_box_lite_upx: diagnosticsSystemInfo.sing_box_lite_upx,
+      sing_box_lite_supported: diagnosticsSystemInfo.sing_box_lite_supported
     },
     managerChecks
   ).map(renderComponentCard);
@@ -5755,6 +6001,14 @@ var styles5 = `
     overflow: hidden;
 }
 
+.pdk_manager-page__component__description {
+    color: var(--text-color-medium);
+    font-size: 13px;
+    line-height: 1.35;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
 .pdk_manager-page__component__version {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -5795,6 +6049,14 @@ var styles5 = `
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+}
+
+.pdk_manager-page__component__note {
+    color: var(--text-color-medium);
+    font-size: 12px;
+    line-height: 1.35;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .pdk_manager-page__component__actions > .pdk-partial-button {
@@ -5938,7 +6200,8 @@ ${PartialStyles}
             rgba(255, 255, 255, 0.4),
             transparent
     );
-    animation: skeleton-shimmer 1.6s infinite;
+    animation: skeleton-shimmer ${SKELETON_SHIMMER_DURATION}ms infinite;
+    animation-delay: var(--skeleton-phase, 0s);
 }
 
 @keyframes skeleton-shimmer {
@@ -6025,14 +6288,29 @@ async function withTimeout(promise, timeoutMs, operationName, timeoutMessage = _
 }
 
 // src/helpers/executeShellCommand.ts
+var execNoBatch;
+async function execWithoutBatching(command, args) {
+  execNoBatch ?? (execNoBatch = rpc.declare({
+    object: "file",
+    method: "exec",
+    params: ["command", "params", "env"],
+    nobatch: true
+  }));
+  const reply = await execNoBatch(command, args);
+  if (reply && typeof reply === "object") {
+    return reply;
+  }
+  return { stdout: "", stderr: `ubus status ${reply}`, code: Number(reply) };
+}
 async function executeShellCommand({
   command,
   args,
-  timeout = COMMAND_TIMEOUT
+  timeout = COMMAND_TIMEOUT,
+  nobatch = false
 }) {
   try {
     return withTimeout(
-      fs.exec(command, args),
+      nobatch ? execWithoutBatching(command, args) : fs.exec(command, args),
       timeout,
       [command, ...args].join(" ")
     );
@@ -6159,6 +6437,7 @@ return baseclass.extend({
   NetShiftShellMethods,
   REGIONAL_OPTIONS,
   RemoteFakeIPMethods,
+  SKELETON_SHIMMER_DURATION,
   STATUS_COLORS,
   SUBSCRIPTION_UPDATE_INTERVAL_OPTIONS,
   TabService,
@@ -6185,6 +6464,7 @@ return baseclass.extend({
   svgEl,
   validateDNS,
   validateDomain,
+  validateDomainRule,
   validateIP,
   validateIPV4,
   validateIPV6,

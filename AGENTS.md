@@ -6,8 +6,8 @@ roles, and workflow. Read it fully before doing anything in this repository.
 
 ## What NetShift Extended is (one paragraph)
 
-NetShift Extended (`netshift-extended`) is a private fork of upstream NetShift
-(yandexru45/netshift, originally `itdoginfo/podkop`): a traffic-routing / VPN
+NetShift Extended ([ArmAGEDDon1109/netshift](https://github.com/ArmAGEDDon1109/netshift)) is a
+fork of upstream NetShift (yandexru45/netshift, originally `itdoginfo/podkop`): a traffic-routing / VPN
 client for **OpenWRT 24.10+** on **sing-box**. It routes selected
 domains/subnets through a tunnel while sending everything else directly, ships
 a LuCI web UI, runs **local DNS** (dnsmasq → sing-box at `127.0.0.42:53`,

@@ -142,3 +142,52 @@ nft_add_set_elements_from_file_chunked_v6() {
         nft_add_set_elements "$nft_table_name" "$nft_set_name" "$array"
     fi
 }
+
+# task-034 / router-originated OUTPUT marking fix: emit the destination-selective marking rules for ONE
+# chain. The prerouting (`mangle`) chain and the local-output (`mangle_output`)
+# chain must apply the exact same model, so both are fed by this single
+# generator — letting them drift apart is what black-holed router-originated
+# traffic (the router's own dnsmasq receives FakeIP answers for proxied
+# domains, but nothing marked those connections for tproxy).
+#
+# $1 = chain name (`mangle` or `mangle_output`)
+# $2 = 1 when a global_proxy section is active -> mark ALL tcp/udp; else 0
+# $3 = 1 when block_doh is enabled -> also mark the DoH resolver CIDRs; else 0
+# rest = optional match qualifier tokens (`iifname "@<set>"` for the LAN
+#        prerouting chain, none for router-originated OUTPUT traffic)
+nft_add_selective_marking_rules() {
+    local chain="$1"
+    local mark_all="$2"
+    local block_doh="$3"
+    shift 3
+
+    if [ "$mark_all" = "1" ]; then
+        nft add rule inet "$NFT_TABLE_NAME" "$chain" "$@" meta l4proto tcp meta mark set "$NFT_FAKEIP_MARK" counter
+        nft add rule inet "$NFT_TABLE_NAME" "$chain" "$@" meta l4proto udp meta mark set "$NFT_FAKEIP_MARK" counter
+        return 0
+    fi
+
+    # Destination-selective: proxied subnets (union set) and the FakeIP range
+    # (proxied DOMAINS resolve to FakeIPs via the dns-in inbound, so marking the
+    # FakeIP range carries domain routing in).
+    nft add rule inet "$NFT_TABLE_NAME" "$chain" "$@" ip daddr "@$NFT_COMMON_SET_NAME" meta mark set "$NFT_FAKEIP_MARK" counter
+    nft add rule inet "$NFT_TABLE_NAME" "$chain" "$@" ip daddr "$SB_FAKEIP_INET4_RANGE" meta mark set "$NFT_FAKEIP_MARK" counter
+    if netshift_ipv6_enabled; then
+        nft add rule inet "$NFT_TABLE_NAME" "$chain" "$@" ip6 daddr "@$NFT_COMMON_SET_NAME_V6" meta mark set "$NFT_FAKEIP_MARK" counter
+        nft add rule inet "$NFT_TABLE_NAME" "$chain" "$@" ip6 daddr "$SB_FAKEIP_INET6_RANGE" meta mark set "$NFT_FAKEIP_MARK" counter
+    fi
+
+    # DoH-block CIDRs (when enabled): force well-known DoH resolver IPs into
+    # sing-box so the route-level DoH reject rule can drop them.
+    if [ "$block_doh" = "1" ]; then
+        local doh_cidr
+        for doh_cidr in $DOH_BLOCK_IPV4_CIDRS; do
+            nft add rule inet "$NFT_TABLE_NAME" "$chain" "$@" ip daddr "$doh_cidr" meta mark set "$NFT_FAKEIP_MARK" counter
+        done
+        if netshift_ipv6_enabled; then
+            for doh_cidr in $DOH_BLOCK_IPV6_CIDRS; do
+                nft add rule inet "$NFT_TABLE_NAME" "$chain" "$@" ip6 daddr "$doh_cidr" meta mark set "$NFT_FAKEIP_MARK" counter
+            done
+        fi
+    fi
+}

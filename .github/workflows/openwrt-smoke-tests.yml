@@ -8,9 +8,6 @@ on:
     paths:
       - 'netshift/**'
       - 'luci-app-netshift/**'
-      - 'tools/**'
-      - '.github/workflows/ci-main.yml'
-      - '.github/workflows/build-packages.yml'
       - 'tests/**'
       - 'install.sh'
       - 'Dockerfile-ipk'
@@ -24,9 +21,6 @@ on:
     paths:
       - 'netshift/**'
       - 'luci-app-netshift/**'
-      - 'tools/**'
-      - '.github/workflows/ci-main.yml'
-      - '.github/workflows/build-packages.yml'
       - 'tests/**'
       - 'install.sh'
       - 'Dockerfile-ipk'

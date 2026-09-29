@@ -46,6 +46,86 @@ auto_learn_get_max_domains() {
     echo "$max_domains"
 }
 
+auto_learn_get_zapret_probe_delay() {
+    local delay
+
+    config_get delay "auto_learn" "zapret_probe_delay" "$AUTO_LEARN_DEFAULT_ZAPRET_PROBE_DELAY"
+    case "$delay" in
+        *[!0-9]*) delay="$AUTO_LEARN_DEFAULT_ZAPRET_PROBE_DELAY" ;;
+    esac
+    echo "$delay"
+}
+
+auto_learn_get_domain_stage() {
+    local domain="$1"
+
+    auto_learn_init_state_file
+    jq -r --arg domain "$domain" \
+        '.domains[] | select(.name == $domain) | .stage' \
+        "$AUTO_LEARN_STATE_FILE" 2>/dev/null
+}
+
+auto_learn_get_domain_updated_at() {
+    local domain="$1"
+
+    auto_learn_init_state_file
+    jq -r --arg domain "$domain" \
+        '.domains[] | select(.name == $domain) | .updated_at' \
+        "$AUTO_LEARN_STATE_FILE" 2>/dev/null
+}
+
+auto_learn_domain_ready_for_probe() {
+    local domain="$1"
+    local stage now updated_at delay
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    if ! auto_learn_validate_domain "$domain"; then
+        return 1
+    fi
+
+    stage="$(auto_learn_get_domain_stage "$domain")"
+    case "$stage" in
+    ""|failed)
+        if [ -n "$stage" ]; then
+            updated_at="$(auto_learn_get_domain_updated_at "$domain")"
+            case "$updated_at" in
+                *[!0-9]*) return 1 ;;
+            esac
+            now="$(date +%s)"
+            if [ "$((now - updated_at))" -lt "$AUTO_LEARN_PROBE_COOLDOWN_SEC" ]; then
+                return 1
+            fi
+        fi
+        return 0
+        ;;
+    zapret_pending)
+        updated_at="$(auto_learn_get_domain_updated_at "$domain")"
+        case "$updated_at" in
+            *[!0-9]*) return 1 ;;
+        esac
+        delay="$(auto_learn_get_zapret_probe_delay)"
+        now="$(date +%s)"
+        [ "$((now - updated_at))" -ge "$delay" ]
+        ;;
+    resolved_direct|resolved_zapret|resolved_desync|netshift)
+        return 1
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+}
+
+auto_learn_ensure_ruleset_file() {
+    local section ruleset_tag ruleset_filepath
+
+    section="$(auto_learn_get_target_section)" || return 1
+    ruleset_tag="$(get_ruleset_tag "$section" "$AUTO_LEARN_RULESET_NAME" "domains")"
+    ruleset_filepath="$TMP_RULESET_FOLDER/$ruleset_tag.json"
+    mkdir -p "$TMP_RULESET_FOLDER"
+    create_source_rule_set "$ruleset_filepath"
+}
+
 auto_learn_normalize_domain() {
     local domain="$1"
 
@@ -62,10 +142,67 @@ auto_learn_normalize_domain() {
     echo "$domain"
 }
 
+auto_learn_is_http_reachable_code() {
+    local code="$1"
+
+    case "$code" in
+    ""|000|000000) return 1 ;;
+    esac
+    return 0
+}
+
+auto_learn_domain_ends_with_suffix() {
+    local domain="$1" suffix="$2"
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    [ "$domain" = "$suffix" ] && return 0
+    case "$domain" in
+    *."$suffix") return 0 ;;
+    esac
+    return 1
+}
+
+auto_learn_should_skip_candidate() {
+    local domain="$1" suffix
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    case "$domain" in
+    localhost) return 0 ;;
+    *.in-addr.arpa|*.ip6.arpa|in-addr.arpa|ip6.arpa) return 0 ;;
+    ya.ru|*.ya.ru) return 0 ;;
+    yandex.*|*.yandex.*) return 0 ;;
+    esac
+    case "$domain" in
+    *.*) ;;
+    *) return 0 ;;
+    esac
+    for suffix in $AUTO_LEARN_SKIP_DOMAIN_SUFFIXES; do
+        auto_learn_domain_ends_with_suffix "$domain" "$suffix" && return 0
+    done
+    return 1
+}
+
+auto_learn_purge_skipped_domains() {
+    local domain
+
+    auto_learn_init_state_file
+    for domain in $(jq -r '.domains[].name' "$AUTO_LEARN_STATE_FILE" 2>/dev/null); do
+        [ -n "$domain" ] || continue
+        if auto_learn_should_skip_candidate "$domain"; then
+            auto_learn_unroute_domain_if_needed "$domain"
+            auto_learn_remove_domain_from_state "$domain"
+            log "Auto-learn: purged skipped domain $domain" "info"
+        fi
+    done
+}
+
 auto_learn_validate_domain() {
     local domain="$1"
 
     domain="$(auto_learn_normalize_domain "$domain")"
+    if auto_learn_should_skip_candidate "$domain"; then
+        return 1
+    fi
     [ -n "$domain" ] && is_domain_suffix "$domain"
 }
 
@@ -139,8 +276,10 @@ auto_learn_hotpatch_ruleset() {
     ruleset_filepath="$TMP_RULESET_FOLDER/$ruleset_tag.json"
 
     if ! file_exists "$ruleset_filepath"; then
-        log "Auto-learn ruleset $ruleset_filepath is not present (sing-box not running?); domain queued in state only" "warn"
-        return 1
+        auto_learn_ensure_ruleset_file || {
+            log "Auto-learn ruleset $ruleset_filepath is not present (sing-box not running?); domain queued in state only" "warn"
+            return 1
+        }
     fi
 
     json_array="$(comma_string_to_json_array "$domain")"
@@ -197,19 +336,169 @@ auto_learn_add_netshift_domain() {
     fi
 
     auto_learn_upsert_domain "$domain" "netshift" "$reason"
-    auto_learn_hotpatch_ruleset "$section" "$domain"
+    auto_learn_hotpatch_ruleset "$section" "$domain" || \
+        log "Auto-learn: $domain saved in state but ruleset hot-patch failed (reload NetShift if routing is missing)" "warn"
+    return 0
 }
 
-auto_learn_probe_direct() {
-    local domain="$1"
-    local code
+auto_learn_is_fakeip_address() {
+    local ip="$1"
 
-    domain="$(auto_learn_normalize_domain "$domain")"
-    code="$(curl -m "$AUTO_LEARN_CURL_TIMEOUT" -sS -o /dev/null -w "%{http_code}" "https://$domain/" 2>/dev/null)" || return 1
-    case "$code" in
-        2*|3*) return 0 ;;
+    case "$ip" in
+    198.18.*|198.19.*|127.*|0.*) return 0 ;;
     esac
     return 1
+}
+
+# Resolve A record via upstream DNS (not router dnsmasq/FakeIP).
+auto_learn_resolve_real_ipv4() {
+    local domain="$1"
+    local dns ip
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    for dns in $AUTO_LEARN_PROBE_DNS_SERVERS; do
+        ip="$(dig +short +time=3 +tries=1 "@$dns" A "$domain" 2>/dev/null \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
+        if [ -n "$ip" ] && ! auto_learn_is_fakeip_address "$ip"; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# curl exit codes where TLS handshake completed (HTTP status/empty body may vary).
+auto_learn_curl_tls_handshake_ok() {
+    local rc="$1"
+
+    case "$rc" in
+    0|22|52) return 0 ;;
+    35|51|53|54|58|59|60|64|66|77|83) return 1 ;;
+    7|28|56) return 1 ;;
+    *) return 1 ;;
+    esac
+}
+
+# TLS handshake to $ip:443 with SNI=$domain (openssl when available).
+auto_learn_openssl_tls_probe_ok() {
+    local domain="$1" ip="$2"
+    local out
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    [ -n "$ip" ] || return 1
+    command -v openssl >/dev/null 2>&1 || return 1
+
+    out="$(echo | openssl s_client -connect "${ip}:443" -servername "$domain" \
+        -brief -tls1_2 2>/dev/null)" || return 1
+    echo "$out" | grep -q 'CONNECTION ESTABLISHED' || return 1
+    echo "$out" | grep -qi 'connection reset\|alert handshake failure\|ssl handshake failure' && return 1
+    return 0
+}
+
+# TLS reachability via real DNS (--resolve), not router FakeIP.
+# Zapret often breaks TLS while TCP still connects; openssl/curl SSL errors catch that.
+auto_learn_tls_probe_ok() {
+    local domain="$1"
+    local proxy_url="$2"
+    local ip rc resolve_args
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+
+    if [ -n "$proxy_url" ]; then
+        ip="$(auto_learn_resolve_real_ipv4 "$domain")"
+        resolve_args=""
+        if [ -n "$ip" ]; then
+            resolve_args="--resolve ${domain}:443:${ip}"
+        fi
+        curl -4 -m "$AUTO_LEARN_CURL_TIMEOUT" --connect-timeout 5 \
+            --max-redirs 0 -sS -x "$proxy_url" $resolve_args \
+            -o /dev/null "https://${domain}/" 2>/dev/null
+        rc=$?
+        auto_learn_curl_tls_handshake_ok "$rc"
+        return $?
+    fi
+
+    ip="$(auto_learn_resolve_real_ipv4 "$domain")"
+    [ -n "$ip" ] || return 1
+
+    if auto_learn_openssl_tls_probe_ok "$domain" "$ip"; then
+        return 0
+    fi
+
+    curl -4 -m "$AUTO_LEARN_CURL_TIMEOUT" --connect-timeout 5 \
+        --max-redirs 0 -sS --head \
+        --resolve "${domain}:443:${ip}" \
+        -o /dev/null "https://${domain}/" 2>/dev/null
+    rc=$?
+    auto_learn_curl_tls_handshake_ok "$rc"
+}
+
+auto_learn_probe_tls() {
+    auto_learn_tls_probe_ok "$1" ""
+}
+
+# Ensure domain is in Zapret exclude, wait for apply, run TLS probe (desync off).
+auto_learn_probe_tls_with_zapret_exclude() {
+    local domain="$1"
+    local added_for_probe
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    added_for_probe=0
+
+    if ! zapret_adapter_is_installed || ! zapret_adapter_has_api; then
+        return 1
+    fi
+
+    if zapret_adapter_is_excluded "$domain"; then
+        auto_learn_probe_tls "$domain"
+        return $?
+    fi
+
+    zapret_adapter_add_exclude "$domain"
+    zapret_adapter_apply_now
+    sleep "$AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC"
+    added_for_probe=1
+
+    if auto_learn_probe_tls "$domain"; then
+        return 0
+    fi
+
+    if [ "$added_for_probe" -eq 1 ]; then
+        zapret_adapter_remove_exclude "$domain"
+        zapret_adapter_apply_now
+        sleep "$AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC"
+    fi
+
+    return 1
+}
+
+# True direct path: Zapret desync off (exclude) when integration is active, else plain WAN TLS.
+auto_learn_probe_raw_direct() {
+    local domain="$1"
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    if auto_learn_zapret_enabled && zapret_adapter_is_installed && zapret_adapter_has_api; then
+        auto_learn_probe_tls_with_zapret_exclude "$domain"
+        return $?
+    fi
+    auto_learn_probe_tls "$domain"
+}
+
+# Reachability with Zapret desync active (domain not in exclude list).
+auto_learn_probe_with_desync() {
+    local domain="$1"
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+
+    if auto_learn_zapret_enabled && zapret_adapter_is_installed && zapret_adapter_has_api; then
+        if zapret_adapter_is_excluded "$domain"; then
+            zapret_adapter_remove_exclude "$domain"
+            zapret_adapter_apply_now
+            sleep "$AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC"
+        fi
+    fi
+
+    auto_learn_probe_tls "$domain"
 }
 
 auto_learn_probe_via_service_proxy() {
@@ -222,11 +511,18 @@ auto_learn_probe_via_service_proxy() {
     fi
 
     proxy_url="http://$SB_SERVICE_MIXED_INBOUND_ADDRESS:$SB_SERVICE_MIXED_INBOUND_PORT"
-    code="$(curl -m "$AUTO_LEARN_CURL_TIMEOUT" -sS -x "$proxy_url" -o /dev/null -w "%{http_code}" "https://$domain/" 2>/dev/null)" || return 1
-    case "$code" in
-        2*|3*) return 0 ;;
-    esac
-    return 1
+    auto_learn_tls_probe_ok "$domain" "$proxy_url"
+}
+
+auto_learn_unroute_domain_if_needed() {
+    local domain="$1"
+    local section stage
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    stage="$(auto_learn_get_domain_stage "$domain")"
+    [ "$stage" = "netshift" ] || return 0
+    section="$(auto_learn_get_target_section 2>/dev/null)" || return 0
+    [ -n "$section" ] && auto_learn_remove_from_ruleset "$section" "$domain"
 }
 
 auto_learn_process_domain() {
@@ -234,6 +530,13 @@ auto_learn_process_domain() {
     local reason="blocked"
 
     domain="$(auto_learn_normalize_domain "$domain")"
+    if auto_learn_should_skip_candidate "$domain"; then
+        auto_learn_unroute_domain_if_needed "$domain"
+        auto_learn_remove_domain_from_state "$domain"
+        echo "{\"success\":true,\"stage\":\"skipped\",\"domain\":\"$domain\",\"message\":\"excluded suffix or local hostname\"}"
+        return 0
+    fi
+
     if ! auto_learn_validate_domain "$domain"; then
         echo '{"success":false,"message":"invalid domain"}'
         return 1
@@ -244,32 +547,42 @@ auto_learn_process_domain() {
         return 1
     fi
 
-    if auto_learn_probe_direct "$domain"; then
-        auto_learn_upsert_domain "$domain" "resolved_direct" "reachable"
+    # 1) TLS with Zapret desync off (exclude list). Keep exclude when TLS succeeds.
+    if auto_learn_probe_raw_direct "$domain"; then
+        auto_learn_unroute_domain_if_needed "$domain"
+        auto_learn_upsert_domain "$domain" "resolved_direct" "reachable_raw_tls"
         echo "{\"success\":true,\"stage\":\"resolved_direct\",\"domain\":\"$domain\"}"
         return 0
     fi
 
+    # 2) TLS with Zapret desync on — DPI bypass may be enough for some sites.
     if auto_learn_zapret_enabled && zapret_adapter_is_installed && zapret_adapter_has_api; then
-        if ! zapret_adapter_is_excluded "$domain"; then
-            zapret_adapter_add_exclude "$domain"
-            zapret_adapter_apply_debounced
-            auto_learn_upsert_domain "$domain" "zapret_pending" "trying_exclude"
-            echo "{\"success\":true,\"stage\":\"zapret_pending\",\"domain\":\"$domain\",\"message\":\"added to zapret exclude; re-probe later\"}"
+        if auto_learn_probe_with_desync "$domain"; then
+            auto_learn_unroute_domain_if_needed "$domain"
+            auto_learn_upsert_domain "$domain" "resolved_desync" "zapret_desync_tls"
+            echo "{\"success\":true,\"stage\":\"resolved_desync\",\"domain\":\"$domain\"}"
             return 0
         fi
+    fi
 
-        if auto_learn_probe_direct "$domain"; then
-            auto_learn_upsert_domain "$domain" "resolved_zapret" "exclude_helped"
+    # 2.5) Desync breaks TLS but exclude restores it (e.g. Let's Encrypt ACME API).
+    if auto_learn_zapret_enabled && zapret_adapter_is_installed && zapret_adapter_has_api; then
+        if auto_learn_probe_tls_with_zapret_exclude "$domain"; then
+            auto_learn_unroute_domain_if_needed "$domain"
+            auto_learn_upsert_domain "$domain" "resolved_zapret" "zapret_exclude_tls"
             echo "{\"success\":true,\"stage\":\"resolved_zapret\",\"domain\":\"$domain\"}"
             return 0
         fi
     fi
 
-    if auto_learn_probe_via_service_proxy "$domain"; then
-        reason="geo_or_block"
+    # 3) Still blocked — route through NetShift only if VPN TLS path works.
+    if ! auto_learn_probe_via_service_proxy "$domain"; then
+        auto_learn_upsert_domain "$domain" "failed" "unreachable"
+        echo "{\"success\":false,\"stage\":\"failed\",\"domain\":\"$domain\",\"message\":\"unreachable direct and via proxy\"}"
+        return 1
     fi
 
+    reason="geo_or_block"
     if auto_learn_add_netshift_domain "$domain" "$reason"; then
         echo "{\"success\":true,\"stage\":\"netshift\",\"domain\":\"$domain\",\"reason\":\"$reason\"}"
         return 0
@@ -346,14 +659,135 @@ configure_auto_learned_domain_list() {
     target_section="$(auto_learn_get_target_section)" || return 0
     [ "$section" = "$target_section" ] || return 0
 
+    prepare_source_ruleset "$section" "$AUTO_LEARN_RULESET_NAME" "domains" "$route_rule_tag"
     items="$(auto_learn_list_netshift_domains | tr '\n' ',' | sed 's/,$//')"
     [ -n "$items" ] || return 0
 
-    prepare_source_ruleset "$section" "$AUTO_LEARN_RULESET_NAME" "domains" "$route_rule_tag"
     ruleset_filepath="$TMP_RULESET_FOLDER/$(get_ruleset_tag "$section" "$AUTO_LEARN_RULESET_NAME" "domains").json"
     json_array="$(comma_string_to_json_array "$items")"
     patch_source_ruleset_rules "$ruleset_filepath" "domain_suffix" "$json_array"
     log "Configured auto-learned domains for section '$section'" "info"
+}
+
+auto_learn_parse_dnsmasq_query_line() {
+    local line="$1"
+    local domain
+
+    case "$line" in
+    *"query[A] "*|*"query[AAAA] "*|*"query[A]"*" from "*|*"query[AAAA]"*" from "*) ;;
+    *) return 1 ;;
+    esac
+
+    domain="$(echo "$line" | sed -n 's/.*query\[[^]]*\] \([^ ]*\) from.*/\1/p')"
+    domain="$(auto_learn_normalize_domain "$domain")"
+    auto_learn_validate_domain "$domain" || return 1
+    echo "$domain"
+}
+
+auto_learn_collect_dns_candidates() {
+    local last_ts now line domain candidates
+
+    last_ts="$(cat "$AUTO_LEARN_DNS_LOG_TS_FILE" 2>/dev/null)"
+    case "$last_ts" in
+        *[!0-9]*) last_ts=0 ;;
+    esac
+    now="$(date +%s)"
+    candidates=""
+
+    logread -t "$last_ts" 2>/dev/null | while IFS= read -r line; do
+        case "$line" in
+        *dnsmasq*|*DNSMasq*)
+            domain="$(auto_learn_parse_dnsmasq_query_line "$line")" || continue
+            if auto_learn_domain_ready_for_probe "$domain"; then
+                echo "$domain"
+            fi
+            ;;
+        esac
+    done | sort -u > "${AUTO_LEARN_DNS_LOG_TS_FILE}.candidates.$$" 2>/dev/null
+
+    if [ -f "${AUTO_LEARN_DNS_LOG_TS_FILE}.candidates.$$" ]; then
+        candidates="$(cat "${AUTO_LEARN_DNS_LOG_TS_FILE}.candidates.$$" 2>/dev/null)"
+        rm -f "${AUTO_LEARN_DNS_LOG_TS_FILE}.candidates.$$"
+    fi
+
+    echo "$now" > "$AUTO_LEARN_DNS_LOG_TS_FILE"
+    echo "$candidates"
+}
+
+auto_learn_collect_pending_candidates() {
+    local now delay domain updated_at
+
+    auto_learn_init_state_file
+    now="$(date +%s)"
+    delay="$(auto_learn_get_zapret_probe_delay)"
+
+    jq -r --argjson now "$now" --argjson delay "$delay" --argjson cooldown "$AUTO_LEARN_PROBE_COOLDOWN_SEC" \
+        '
+        .domains[]
+        | select(
+            (.stage == "zapret_pending" and ($now - .updated_at) >= $delay)
+            or (.stage == "failed" and ($now - .updated_at) >= $cooldown)
+        )
+        | .name
+        ' "$AUTO_LEARN_STATE_FILE" 2>/dev/null | sort -u
+}
+
+auto_learn_queue_probe_domain() {
+    local domain="$1"
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    auto_learn_should_skip_candidate "$domain" && return 0
+    auto_learn_domain_ready_for_probe "$domain" || return 0
+    log "Auto-learn: probing $domain" "info"
+    auto_learn_process_domain "$domain" >/dev/null 2>&1 || true
+}
+
+auto_learn_monitor_tick() {
+    local candidates pending merged domain count limit
+
+    if ! auto_learn_is_enabled; then
+        return 0
+    fi
+
+    auto_learn_purge_skipped_domains
+
+    pending="$(auto_learn_collect_pending_candidates)"
+    candidates="$(auto_learn_collect_dns_candidates)"
+    merged="$(printf '%s\n%s\n' "$pending" "$candidates" | sed '/^$/d' | sort -u)"
+    [ -n "$merged" ] || return 0
+
+    count=0
+    limit="$AUTO_LEARN_MAX_PROBES_PER_TICK"
+    for domain in $merged; do
+        auto_learn_queue_probe_domain "$domain"
+        count=$((count + 1))
+        [ "$count" -ge "$limit" ] && break
+    done
+}
+
+monitor_auto_learn() {
+    echo $$ > "$AUTO_LEARN_MONITOR_PIDFILE"
+
+    while true; do
+        config_load "$NETSHIFT_CONFIG"
+        if auto_learn_is_enabled; then
+            auto_learn_monitor_tick
+        fi
+        sleep "$AUTO_LEARN_MONITOR_INTERVAL"
+    done
+}
+
+auto_learn_clear_probe_log() {
+    local tmpfile
+
+    auto_learn_init_state_file
+    tmpfile="$(mktemp)"
+    jq '.domains = [.domains[] | select(.stage == "netshift")]' \
+        "$AUTO_LEARN_STATE_FILE" > "$tmpfile" || {
+        rm -f "$tmpfile"
+        return 1
+    }
+    mv "$tmpfile" "$AUTO_LEARN_STATE_FILE"
 }
 
 auto_learn_cli() {
@@ -384,6 +818,14 @@ auto_learn_cli() {
         ;;
     clear)
         auto_learn_clear_netshift_domains
+        echo '{"success":true}'
+        ;;
+    purge-skipped)
+        auto_learn_purge_skipped_domains
+        echo '{"success":true}'
+        ;;
+    clear-log)
+        auto_learn_clear_probe_log
         echo '{"success":true}'
         ;;
     zapret-status)

@@ -695,7 +695,9 @@ function createSectionContent(section) {
       return true;
     }
 
-    const validation = main.validateDomain(value, true);
+    // validateDomainRule (not validateDomain): a routing rule matches a host,
+    // never a URL path, so "example.com/path" is rejected here.
+    const validation = main.validateDomainRule(value, true);
 
     if (validation.valid) {
       return true;
@@ -733,7 +735,7 @@ function createSectionContent(section) {
     }
 
     const { valid, results } = main.bulkValidate(domains, (row) =>
-      main.validateDomain(row, true),
+      main.validateDomainRule(row, true),
     );
 
     if (!valid) {

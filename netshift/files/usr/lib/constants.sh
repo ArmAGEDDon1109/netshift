@@ -5,16 +5,20 @@ NETSHIFT_VERSION="__COMPILED_VERSION_VARIABLE__"
 ## Common
 NETSHIFT_CONFIG="/etc/config/netshift"
 NETSHIFT_STATE_DIR="/etc/netshift"
-# Persistent (overlay) snapshot of the sing-box runtime cache DB. The live cache
-# (settings.cache_path, default /tmp/sing-box/cache.db) is tmpfs-backed, so a
-# reboot wipes it — and with it sing-box's persisted selector choice (the
-# subscription server the user picked, stored in the cache DB by outbound tag).
-# The backend snapshots the live DB here on a clean stop and right after an
-# explicit selection, and restores it on start, so the choice (and FakeIP state)
-# survive a reboot WITHOUT paying flash writes on every FakeIP allocation (which
-# is exactly why the live DB deliberately stays in tmpfs).
+# The live sing-box cache DB (settings.cache_path, /tmp/sing-box/cache.db by
+# default) is on tmpfs, and it is where sing-box keeps the server picked in a
+# selector. The DB is copied to flash when the selection changes and put back
+# before sing-box starts after a reboot. The selection file holds the choice the
+# copy was taken with, so FakeIP churn never causes a flash write.
 NETSHIFT_CACHE_BACKUP="$NETSHIFT_STATE_DIR/cache.db"
-NETSHIFT_CACHE_BACKUP_LOCK="$NETSHIFT_STATE_DIR/cache.db.lock"
+NETSHIFT_CACHE_SELECTION="$NETSHIFT_STATE_DIR/cache.db.selection"
+NETSHIFT_CACHE_BACKUP_LOCK="/var/lock/netshift-cache-backup.lock"
+# Set when restore_sing_box_cache put a copy back into tmpfs on this boot. A copy
+# sing-box then refuses to open would fail on every boot, because the copy lives
+# on flash and is put back again each time; the monitor uses this flag to drop
+# the restored cache once and let sing-box start clean instead. tmpfs on purpose:
+# it only ever means "the cache running right now came from a copy".
+NETSHIFT_CACHE_RESTORED_FLAG="/var/run/netshift-cache-restored"
 RESOLV_CONF="/etc/resolv.conf"
 DNS_RESOLVERS="1.1.1.1 1.0.0.1 8.8.8.8 8.8.4.4 9.9.9.9 9.9.9.11 94.140.14.14 94.140.15.15 208.67.220.220 208.67.222.222 77.88.8.1 77.88.8.8"
 CHECK_PROXY_IP_DOMAIN="ip.podkop.fyi"
@@ -30,6 +34,36 @@ TMP_SUBSCRIPTION_DOWNLOAD_FOLDER="$TMP_SING_BOX_FOLDER/subscription-downloads"
 # tag-dedup + sing-box check bisection). Per-feed cache files are keyed
 # "${section}.<md5(url)>.<ext>" under SUBSCRIPTION_CACHE_FOLDER.
 TMP_SUBSCRIPTION_MERGE_FOLDER="$TMP_SING_BOX_FOLDER/subscription-merge"
+# Marks a subscription body that was downloaded into the cache but never made it
+# into the running sing-box. The cache compares a feed against what is already
+# stored, so without this marker the same body counts as "unchanged" on the next
+# run and the router keeps serving the old outbounds. Set before any feed is
+# downloaded. Lives in tmpfs on purpose: a reboot, and any start that builds a
+# valid config, applies the cache anyway.
+SUBSCRIPTION_PENDING_APPLY_FLAG="$TMP_SING_BOX_FOLDER/subscription-pending-apply"
+# Seconds to wait after SIGHUP before deciding that sing-box came back up on the
+# new config. Tests set it to 0.
+SING_BOX_RELOAD_SETTLE_DELAY="3"
+# Exit code of `netshift subscription_update` when the feeds were downloaded but
+# applying them failed (the pending-apply marker stays for the next run).
+SUBSCRIPTION_UPDATE_APPLY_FAILED=3
+# Interval a subscription section runs on when its own
+# `subscription_update_interval` says nothing usable: the option is absent (an
+# old conffile), or it holds a value the cron table does not know (a hand-edited
+# UCI option such as "2h"). An unknown value must NOT drop the section out of
+# every cron job — that silently stops refreshing it — so it is treated as this
+# default. Both the cron collector and the `subscription_update <interval>`
+# section filter read this constant, so the two cannot drift apart silently.
+SUBSCRIPTION_UPDATE_INTERVAL_DEFAULT="1h"
+# Deferred startup subscription refresh (start_subscription_startup_retry_worker):
+# a feed that is unreachable is retried every SUBSCRIPTION_RETRY_INTERVAL
+# seconds for as long as it takes. A feed that downloads but does not apply is
+# retried with the wait doubling up to SUBSCRIPTION_RETRY_BACKOFF_MAX, and after
+# SUBSCRIPTION_RETRY_MAX_APPLY_FAILURES such failures in a row the worker leaves
+# it to the scheduled subscription update.
+SUBSCRIPTION_RETRY_INTERVAL=30
+SUBSCRIPTION_RETRY_MAX_APPLY_FAILURES=5
+SUBSCRIPTION_RETRY_BACKOFF_MAX=600
 # Subscription User-Agent fallback. Many panels return a DIFFERENT body format
 # depending on the client User-Agent (sing-box JSON vs base64 URI list vs Clash
 # vs Xray JSON, or an HTML/403 stub for unknown clients). When no User-Agent is
@@ -78,8 +112,44 @@ NFT_OUTBOUND_MARK="0x00200000"
 
 ## sing-box
 SB_REQUIRED_VERSION="1.12.0"
+# First sing-box-extended release (the part after "-extended-") whose VLESS
+# outbound has the `encryption` field; its pre-releases already carry it.
+SB_EXTENDED_VLESS_ENCRYPTION_MIN="2.0.0"
+# ── sing-box extended lite (third core variant) ─────────────────────
+# Version suffix that marks a lite build: the release tag and the version
+# banner of the binary are the upstream extended tag plus this suffix
+# ("1.14.1-extended-2.7.2" -> "1.14.1-extended-2.7.2-lite").
+SB_LITE_SUFFIX="-lite"
+# Minimum effective free space (MB) on / for the pure ELF lite asset: at or
+# above this the ELF build is chosen automatically, below it the
+# UPX-compressed build (plus its wrapper) is the only one that fits.
+SB_LITE_ELF_MIN_FLASH_MB=64
+# Total RAM (MB) below which a UPX-compressed lite install reports the
+# machine-readable warning code "upx_ram_spike": a UPX binary unpacks itself
+# into memory at exec time, briefly needing more RAM than the process uses
+# afterwards.
+SB_LITE_RAM_WARN_MB=256
+# Our fork's lite release repository. Tags mirror the shtorm-7 extended tags
+# plus SB_LITE_SUFFIX; assets are
+# sing-box-extended-lite-linux-<arch>[-compressed].tar.gz plus sha256sums.txt.
+UPDATES_SING_BOX_LITE_REPO="yandexru45/sing-box-extended-lite"
+# UPX lite layout: the compressed core binary lives here and /usr/bin/sing-box
+# is a POSIX sh wrapper serving `version` from the snapshot cache below. The
+# path deliberately matches the layout the community manual installs
+# (MANCrimSon/EikeiDev) use, so those are detected and cleaned by the same
+# code paths as ours.
+UPDATES_SING_BOX_LITE_CORE_BIN="/usr/libexec/sing-box-core"
+# Snapshot of the real `sing-box version` banner written at lite install
+# time; the UPX wrapper cats it instead of unpacking the core for a mere
+# version probe (and rebuilds it on demand when it is missing).
+NETSHIFT_CORE_VERSION_CACHE="/etc/netshift/core-version.cache"
+# Cache file a community manual lite install leaves behind (its wrapper reads
+# it); removed as an artifact of leaving the lite variant.
+UPDATES_SING_BOX_LITE_ORPHAN_CACHE="/etc/sing-box-version.cache"
 # Monitoring
 MONITOR_CHECK_INTERVAL=10
+# How often the monitor looks for a server picked outside LuCI (Clash dashboard).
+MONITOR_CACHE_SNAPSHOT_INTERVAL=60
 MONITOR_MAX_CRASHES=5
 MONITOR_BACKOFF_BASE=10
 MONITOR_BACKOFF_MAX=300
@@ -98,10 +168,17 @@ UPDATES_RESOLV_BACKUP="/tmp/netshift-resolv.conf.bak"
 # locations; tests override them.
 UPDATES_SING_BOX_BIN="/usr/bin/sing-box"
 UPDATES_LIBCRONET_LIB="/usr/lib/libcronet.so"
+# apk world file; the stable reinstall from a package file restores the
+# sing-box entry in it.
+UPDATES_APK_WORLD="/etc/apk/world"
+# mktemp template for the directory `apk fetch` downloads the stable sing-box
+# package into. It deliberately sits on the same filesystem as the installed
+# binary (overlay) instead of the tmpfs that holds the rollback backup.
+UPDATES_APK_FETCH_DIR="/usr/lib/netshift/apk-fetch"
 # Component Manager — NetShift self-update (task-017). The GitHub latest-release
 # API for NetShift itself (same endpoint install.sh and get_system_info use);
 # the self-update worker downloads the release .ipk/.apk assets from it.
-NETSHIFT_RELEASE_API_URL="https://api.github.com/repos/ArmAGEDDon1109/netshift-extended/releases/latest"
+NETSHIFT_RELEASE_API_URL="https://api.github.com/repos/yandexru45/netshift/releases/latest"
 # GitHub FRONTEND (github.com, NOT the rate-limited api.github.com) redirect path
 # for the NetShift repo. /releases/latest 302-redirects to /releases/tag/<tag>
 # (resolve with curl -w '%{redirect_url}' — no API hit, not subject to the
@@ -109,8 +186,8 @@ NETSHIFT_RELEASE_API_URL="https://api.github.com/repos/ArmAGEDDon1109/netshift-e
 # CDN for direct asset download. Primary path for version-check + self-update;
 # NETSHIFT_RELEASE_API_URL stays as the graceful fallback. Repo slug lives here
 # only — do not hardcode it elsewhere.
-NETSHIFT_REPO_RELEASES_LATEST_URL="https://github.com/ArmAGEDDon1109/netshift-extended/releases/latest"
-NETSHIFT_REPO_RELEASES_DOWNLOAD_BASE="https://github.com/ArmAGEDDon1109/netshift-extended/releases/download"
+NETSHIFT_REPO_RELEASES_LATEST_URL="https://github.com/yandexru45/netshift/releases/latest"
+NETSHIFT_REPO_RELEASES_DOWNLOAD_BASE="https://github.com/yandexru45/netshift/releases/download"
 # tmpfs scratch dir for the self-update download (release packages) — RAM, never
 # the tiny overlay; reaped on success and on reboot.
 UPDATES_NETSHIFT_DOWNLOAD_DIR="/tmp/netshift/selfupdate"
@@ -128,26 +205,17 @@ SB_FAKEIP_DNS_SERVER_TAG="fakeip-server"
 SB_FAKEIP_INET4_RANGE="198.18.0.0/15"
 SB_FAKEIP_INET6_RANGE="fd00:ec3a::/32"
 SB_BOOTSTRAP_SERVER_TAG="bootstrap-dns-server"
-# Interface-bound direct outbound for LAN/private DNS upstream (AdGuard etc.).
-# sing-box dials the resolver with bind_interface so route.default_interface
-# (WAN) does not prevent reaching 192.168.x.x / 10.x.x.x resolvers.
-SB_DNS_LAN_OUTBOUND_TAG="dns-lan-out"
 SB_FAKEIP_DNS_RULE_TAG="fakeip-dns-rule-tag"
 SB_INVERT_FAKEIP_DNS_RULE_TAG="invert-fakeip-dns-rule-tag"
-# Internal-tag for the inbound-aware DNS route rule appended when
-# settings.dns_outbound_mode ∈ {multi,paranoid} (task-047). It routes every
-# query that landed on the dns-in inbound through the chosen proxy outbound
-# (recursive-aware multi-resolver proxy). The rule carries the transient
-# SERVICE_TAG (__service_tag) so it is stripped by
-# sing_box_cm_save_config_to_file -> not visible in the saved config, but
-# stable across runs so debugging+logging remains straightforward.
-SB_DNS_INBOUND_ROUTING_TAG="dns-inbound-routing-rule-tag"
 # Inbounds
 SB_TPROXY_INBOUND_TAG="tproxy-in"
 SB_TPROXY_INBOUND_ADDRESS="127.0.0.1"
 SB_TPROXY_INBOUND_PORT=1602
 SB_TPROXY_INBOUND_ADDRESS_V6="::1"
 SB_TPROXY_INBOUND_PORT_V6=1603
+SB_DNS_LAN_OUTBOUND_TAG="dns-lan-out"
+# Route rule tag when settings.dns_outbound_mode is multi|paranoid (task-047).
+SB_DNS_INBOUND_ROUTING_TAG="dns-inbound-routing-rule-tag"
 SB_DNS_INBOUND_TAG="dns-in"
 SB_DNS_INBOUND_ADDRESS="127.0.0.42"
 SB_DNS_INBOUND_PORT=53
@@ -167,10 +235,19 @@ SUBSCRIPTION_GROUP_DEFAULT_PREFIX_LEN=2
 # a per-group "<flag> Fastest" tag so the cross-group auto choice is tellable
 # apart in the dashboard. Single source for the tag (keep this file UTF-8).
 SB_SUBSCRIPTION_FASTEST_GROUP_TAG="⚡ Fastest"
+# Several subscription_url in one section (group mode off): every feed that
+# contributes nodes gets its own urltest tagged "<prefix><feed name>" next to
+# the section-wide one, so the dashboard can show a Fastest per subscription.
+SB_SUBSCRIPTION_FEED_GROUP_TAG_PREFIX="⚡ "
+# Key stamped on every merged subscription node with its feed index (position
+# in the section's subscription_url list). The facade strips it before the
+# node reaches the config and reports it as SUBSCRIPTION_OUTBOUND_FEEDS_JSON.
+SUBSCRIPTION_FEED_MARKER_KEY="_netshift_feed"
 # Route
 SB_REJECT_RULE_TAG="reject-rule-tag"
 SB_EXCLUSION_RULE_TAG="exclusion-rule-tag"
 SB_DOH_BLOCK_RULE_TAG="doh-block-rule-tag"
+SB_BITTORRENT_DIRECT_RULE_TAG="bittorrent-direct-rule-tag"
 # Experimental
 SB_CLASH_API_CONTROLLER_PORT=9090
 
@@ -194,12 +271,20 @@ SUBNETS_CLOUDFRONT="${GITHUB_RAW_URL}/Subnets/IPv4/cloudfront.lst"
 COMMUNITY_SERVICES="russia_inside russia_outside ukraine_inside geoblock block porn news anime youtube hdrezka tiktok google_ai google_play hodca discord meta twitter cloudflare cloudfront digitalocean hetzner ovh telegram roblox"
 
 ## Auto-learn (blocked / geo-blocked domain detection)
+AUTO_LEARN_MONITOR_PIDFILE="/var/run/netshift_auto_learn_monitor.pid"
 AUTO_LEARN_STATE_FILE="$NETSHIFT_STATE_DIR/auto_learned.json"
 AUTO_LEARN_RULESET_NAME="auto-learned"
 AUTO_LEARN_DEFAULT_PROBE_DELAY="30"
 AUTO_LEARN_DEFAULT_MAX_DOMAINS="500"
 AUTO_LEARN_DEFAULT_ZAPRET_PROBE_DELAY="30"
 AUTO_LEARN_CURL_TIMEOUT="7"
+AUTO_LEARN_MONITOR_INTERVAL="15"
+AUTO_LEARN_PROBE_COOLDOWN_SEC="300"
+AUTO_LEARN_MAX_PROBES_PER_TICK="3"
+AUTO_LEARN_DNS_LOG_TS_FILE="$NETSHIFT_STATE_DIR/auto_learn_dns_ts"
+AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC="2"
+AUTO_LEARN_PROBE_DNS_SERVERS="1.1.1.1 8.8.8.8"
+AUTO_LEARN_SKIP_DOMAIN_SUFFIXES="ru lan local localdomain home internal private invalid test localhost home.arpa intranet corp"
 
 ## Zapret integration (via 90-script.sh / exclude hostlist)
 ZAPRET_INIT_SCRIPT="/etc/init.d/zapret"

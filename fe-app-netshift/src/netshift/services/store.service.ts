@@ -171,7 +171,10 @@ export interface StoreType {
     loading: boolean;
     failed: boolean;
     data: NetShift.OutboundGroup[];
-    latencyFetching: boolean;
+    // Sections whose "Test latency" is running, and the outbound codes still
+    // waiting for their result.
+    latencyTestingSections: string[];
+    latencyPendingOutbounds: string[];
   };
   diagnosticsRunAction: {
     loading: boolean;
@@ -197,6 +200,9 @@ export interface StoreType {
     openwrt_version: string;
     device_model: string;
     sing_box_extended: 0 | 1;
+    sing_box_variant: NetShift.SingBoxVariant;
+    sing_box_lite_upx: 0 | 1;
+    sing_box_lite_supported: 0 | 1;
   };
   managerActions: {
     netshiftCheck: { loading: boolean };
@@ -205,6 +211,8 @@ export interface StoreType {
     singBoxStockAction: { loading: boolean };
     singBoxExtendedCheck: { loading: boolean };
     singBoxExtendedAction: { loading: boolean };
+    singBoxExtendedLiteCheck: { loading: boolean };
+    singBoxExtendedLiteAction: { loading: boolean };
   };
   managerChecks: Record<
     ManagerComponentKey,
@@ -243,7 +251,8 @@ const initialStore: StoreType = {
   sectionsWidget: {
     loading: true,
     failed: false,
-    latencyFetching: false,
+    latencyTestingSections: [],
+    latencyPendingOutbounds: [],
     data: [],
   },
   ...initialDiagnosticStore,

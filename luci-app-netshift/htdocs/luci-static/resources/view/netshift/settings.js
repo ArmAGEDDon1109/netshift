@@ -6,7 +6,7 @@
 "require view.netshift.main as main";
 
 function createSettingsContent(section) {
-  // Group the 27 settings options into 5 native CBI option-group tabs.
+  // Group the 28 settings options into 5 native CBI option-group tabs.
   // HARD RULE: once a section has tab(), every option MUST be added via
   // taboption() — any leftover section.option(...) renders nothing.
   // depends() works across tabs; a tab whose options are all depends-hidden
@@ -178,6 +178,31 @@ function createSettingsContent(section) {
     }
 
     return true;
+  };
+
+  o = section.taboption(
+    "dns",
+    form.Value,
+    "dns_client_subnet",
+    _("EDNS Client Subnet"),
+    _(
+      "Send this IP address or prefix with every DNS query (EDNS Client Subnet, RFC 7871), so geo-distributed services resolve to the node closest to you. Leave empty to disable.",
+    ),
+  );
+  o.placeholder = "203.0.113.0/24";
+  o.rmempty = true;
+  o.validate = function (section_id, value) {
+    if (!value) {
+      return true;
+    }
+
+    const validation = main.validateSubnet(value);
+
+    if (validation.valid) {
+      return true;
+    }
+
+    return validation.message;
   };
 
   // --- Network tab ---
@@ -481,6 +506,18 @@ function createSettingsContent(section) {
     _("Exclude NTP"),
     _(
       "Exclude NTP protocol traffic from the tunnel to prevent it from being routed through the proxy or VPN",
+    ),
+  );
+  o.default = "0";
+  o.rmempty = false;
+
+  o = section.taboption(
+    "advanced",
+    form.Flag,
+    "exclude_bittorrent",
+    _("Exclude BitTorrent"),
+    _(
+      "Route BitTorrent traffic directly, bypassing the proxy or VPN. Some providers block subscriptions when they detect torrent traffic.",
     ),
   );
   o.default = "0";

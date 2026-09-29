@@ -4,6 +4,13 @@ export interface SingBoxComponentActionResult {
   success: boolean;
   version?: string;
   message?: string;
+  // Something the user has to fix by hand whatever the outcome, e.g. a pin
+  // the stable core switch had to leave in the apk world — or the lite
+  // installer's machine-readable 'upx_ram_spike' code.
+  warning?: string;
+  // Extended-lite installs only: the flavour that was installed
+  // ('elf' | 'compressed'); absent for the other cores.
+  build?: 'elf' | 'compressed';
 }
 
 // Shape echoed by `component_action_async sing_box <action>` on start.
@@ -26,6 +33,9 @@ export interface ComponentActionStatus {
   exit_code?: number | null;
   version?: string;
   latest_version?: string;
+  warning?: string;
+  // Extended-lite installs only: the installed flavour ('elf'/'compressed').
+  build?: string;
 }
 
 // ~2s between polls; ~150 polls ≈ 5 min backstop against a wedged job.
@@ -40,6 +50,14 @@ export function parseComponentActionStatus(
   } catch (_e) {
     return null;
   }
+}
+
+// The async job state carries build as '""' when the worker did not report
+// one (non-lite cores) — normalize to the closed result union.
+function normalizeResultBuild(
+  build: string | undefined,
+): 'elf' | 'compressed' | undefined {
+  return build === 'elf' || build === 'compressed' ? build : undefined;
 }
 
 /**
@@ -71,6 +89,8 @@ export async function pollSingBoxComponentAction(
         success: Boolean(status.success),
         version: status.version,
         message: status.message,
+        warning: status.warning || undefined,
+        build: normalizeResultBuild(status.build),
       };
     }
 

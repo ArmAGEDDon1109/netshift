@@ -6,7 +6,7 @@ PKG_VERSION := $(if $(NETSHIFT_VERSION),$(NETSHIFT_VERSION),0.$(shell date +%d%m
 
 PKG_RELEASE:=1
 
-LUCI_TITLE:=LuCI NetShift Extended app
+LUCI_TITLE:=LuCI NetShift app
 LUCI_DEPENDS:=+luci-base +netshift
 LUCI_PKGARCH:=all
 LUCI_LANG.ru:=Русский (Russian)

@@ -115,6 +115,13 @@ zapret_adapter_remove_exclude() {
     sh "$script" remove-exclude-quiet "$domain"
 }
 
+zapret_adapter_apply_now() {
+    if [ -x "$ZAPRET_INIT_SCRIPT" ]; then
+        "$ZAPRET_INIT_SCRIPT" reload > /dev/null 2>&1
+        log "Zapret reloaded (immediate)" "debug"
+    fi
+}
+
 zapret_adapter_apply_debounced() {
     local now last pending
 

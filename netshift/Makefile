@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netshift
 
-PKG_VERSION := $(if $(NETSHIFT_VERSION),$(NETSHIFT_VERSION),0.$(shell date +%d%m%Y))
+PKG_VERSION := $(if $(NETSHIFT_VERSION),$(NETSHIFT_VERSION),0.9.9)
 
 PKG_RELEASE:=1
 
@@ -16,15 +16,13 @@ define Package/netshift
 	CATEGORY:=Network
 	DEPENDS:=+sing-box +curl +jq +kmod-nft-tproxy +coreutils-base64 +bind-dig
 	CONFLICTS:=https-dns-proxy nextdns luci-app-passwall luci-app-passwall2
-	TITLE:=NetShift Extended - domain routing
-	URL:=https://github.com/ArmAGEDDon1109/netshift-extended
+	TITLE:=Domain routing app
+	URL:=https://podkop.net
 	PKGARCH:=all
 endef
 
 define Package/netshift/description
-	NetShift Extended: domain routing via sing-box, local DNS (127.0.0.42),
-	FakeIP, and auto-learn blocked-site detection (Zapret + hot-patch ruleset).
-	VLESS, Shadowsocks, Trojan, Hysteria2, subscriptions.
+	Domain routing. Use of VLESS, Shadowsocks technologies
 endef
 
 define Build/Configure
@@ -59,8 +57,6 @@ define Package/netshift/install
 
 	$(INSTALL_DIR) $(1)/usr/lib/netshift
 	$(CP) ./files/usr/lib/* $(1)/usr/lib/netshift/
-	$(INSTALL_DIR) $(1)/usr/lib/netshift/zapret
-	$(INSTALL_BIN) ./files/usr/lib/zapret/90-script.sh $(1)/usr/lib/netshift/zapret/90-script.sh
 
 	sed -i -e 's/__COMPILED_VERSION_VARIABLE__/$(PKG_VERSION)/g' $(1)/usr/lib/netshift/constants.sh
 endef

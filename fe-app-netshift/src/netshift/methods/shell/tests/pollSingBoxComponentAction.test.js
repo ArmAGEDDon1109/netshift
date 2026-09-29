@@ -61,6 +61,96 @@ describe('pollSingBoxComponentAction', () => {
     );
   });
 
+  it('passes a warning through on success and on failure', async () => {
+    const warned = await pollSingBoxComponentAction(
+      makeFetchStatus([
+        {
+          running: false,
+          success: true,
+          version: '1.12.4',
+          warning: 'apk world pins sing-box',
+          exit_code: 0,
+        },
+      ]),
+      noSleep,
+    );
+
+    expect(warned.success).toBe(true);
+    expect(warned.warning).toBe('apk world pins sing-box');
+
+    const failed = await pollSingBoxComponentAction(
+      makeFetchStatus([
+        {
+          running: false,
+          success: false,
+          message: 'previous binary restored',
+          warning: 'apk world pins sing-box',
+          exit_code: 1,
+        },
+      ]),
+      noSleep,
+    );
+
+    expect(failed.success).toBe(false);
+    expect(failed.warning).toBe('apk world pins sing-box');
+  });
+
+  it('propagates the lite install build flavour and warning code', async () => {
+    // Terminal state of an extended-lite install: build + the machine-readable
+    // upx_ram_spike code ride the same job-status JSON as version/warning.
+    const result = await pollSingBoxComponentAction(
+      makeFetchStatus([
+        {
+          running: false,
+          success: true,
+          version: '1.14.1-extended-2.7.2-lite',
+          warning: 'upx_ram_spike',
+          build: 'compressed',
+          exit_code: 0,
+        },
+      ]),
+      noSleep,
+    );
+
+    expect(result).toEqual({
+      success: true,
+      version: '1.14.1-extended-2.7.2-lite',
+      warning: 'upx_ram_spike',
+      build: 'compressed',
+    });
+  });
+
+  it('normalizes an empty or unknown build flavour to undefined', async () => {
+    const empty = await pollSingBoxComponentAction(
+      makeFetchStatus([
+        { running: false, success: true, version: '1.12.4', build: '' },
+      ]),
+      noSleep,
+    );
+
+    expect(empty.build).toBeUndefined();
+
+    const weird = await pollSingBoxComponentAction(
+      makeFetchStatus([
+        { running: false, success: true, version: '1.12.4', build: 'tar' },
+      ]),
+      noSleep,
+    );
+
+    expect(weird.build).toBeUndefined();
+  });
+
+  it('reports no warning when the job state carries an empty one', async () => {
+    const result = await pollSingBoxComponentAction(
+      makeFetchStatus([
+        { running: false, success: true, version: '1.12.4', warning: '' },
+      ]),
+      noSleep,
+    );
+
+    expect(result.warning).toBeUndefined();
+  });
+
   it('treats a parse failure (null status) as terminal failure', async () => {
     const fetchStatus = makeFetchStatus([
       { running: true, success: true },

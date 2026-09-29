@@ -45,7 +45,6 @@ jobs:
       - preparation
       - smoke-tests
     strategy:
-      fail-fast: false
       matrix:
         include:
           - { package_type: ipk }
@@ -61,58 +60,28 @@ jobs:
           file: ./Dockerfile-${{ matrix.package_type }}
           context: .
           tags: netshift:ci-${{ matrix.package_type }}
-          load: true
-          no-cache: true
           build-args: |
             NETSHIFT_VERSION=${{ needs.preparation.outputs.version }}
 
       - name: Create ${{ matrix.package_type }} Docker container
         run: docker create --name ${{ matrix.package_type }} netshift:ci-${{ matrix.package_type }}
 
-      - name: Copy NetShift packages from ${{ matrix.package_type }} Docker container
-        shell: bash
+      - name: Copy files from ${{ matrix.package_type }} Docker container
         run: |
-          set -euo pipefail
-          PKG_FMT="${{ matrix.package_type }}"
-          VERSION="${{ needs.preparation.outputs.version }}"
-          mkdir -p "./bin/${PKG_FMT}"
-
-          pick_pkg() {
-            local glob="$1"
-            local path
-            path="$(docker run --rm --entrypoint sh "netshift:ci-${PKG_FMT}" -c "ls -1 ${glob} 2>/dev/null | sort | tail -n 1")"
-            if [ -z "$path" ]; then
-              echo "Missing package: ${glob}" >&2
-              docker run --rm --entrypoint find "netshift:ci-${PKG_FMT}" /builder/bin/packages/x86_64 -maxdepth 2 -name '*netshift*' -ls >&2 || true
-              exit 1
-            fi
-            docker cp "${PKG_FMT}:${path}" "./bin/${PKG_FMT}/"
-          }
-
-          if [ "$PKG_FMT" = "ipk" ]; then
-            pick_pkg "/builder/bin/packages/x86_64/utilities/netshift_${VERSION}*.ipk"
-            pick_pkg "/builder/bin/packages/x86_64/luci/luci-app-netshift_${VERSION}*.ipk"
-            pick_pkg "/builder/bin/packages/x86_64/luci/luci-i18n-netshift-ru_*.ipk"
-          else
-            pick_pkg "/builder/bin/packages/x86_64/utilities/netshift-${VERSION}*.apk"
-            pick_pkg "/builder/bin/packages/x86_64/luci/luci-app-netshift-${VERSION}*.apk"
-            pick_pkg "/builder/bin/packages/x86_64/luci/luci-i18n-netshift-ru-*.apk"
-          fi
-
-          ls -la "./bin/${PKG_FMT}/"
-          test "$(find "./bin/${PKG_FMT}" -maxdepth 1 -name "*.${PKG_FMT}" | wc -l)" -eq 3
+          mkdir -p ./bin/${{ matrix.package_type }}
+          docker cp ${{ matrix.package_type }}:/builder/bin/packages/x86_64/utilities/. ./bin/${{ matrix.package_type }}/
+          docker cp ${{ matrix.package_type }}:/builder/bin/packages/x86_64/luci/. ./bin/${{ matrix.package_type }}/
 
         # IPK uses underscore `_` in filenames, while APK uses only dash `-`
       - name: Fix naming difference between build for packages (replace _ with -)
         if: matrix.package_type == 'ipk'
         shell: bash
         run: |
-          for f in ./bin/ipk/netshift-*.ipk ./bin/ipk/luci-app-netshift-*.ipk ./bin/ipk/luci-i18n-netshift-ru*.ipk; do
+          for f in ./bin/${{ matrix.package_type }}/*.${{ matrix.package_type }}; do
             [ -e "$f" ] || continue
             base=$(basename "$f")
             newname=$(echo "$base" | sed 's/_/-/g')
-            [ "$base" = "$newname" ] && continue
-            mv "$f" "./bin/ipk/$newname"
+            mv "$f" "./bin/${{ matrix.package_type }}/$newname"
           done
 
       - name: Filter files
@@ -122,7 +91,7 @@ jobs:
           VERSION="${{ needs.preparation.outputs.version }}"
 
           mkdir -p ./filtered-bin/${{ matrix.package_type }}
-          cp ./bin/${{ matrix.package_type }}/luci-i18n-netshift-ru*.${{ matrix.package_type }} ./filtered-bin/${{ matrix.package_type }}/
+          cp ./bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-*.${{ matrix.package_type }} "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${{ matrix.package_type }}"
           cp ./bin/${{ matrix.package_type }}/netshift-*.${{ matrix.package_type }} ./filtered-bin/${{ matrix.package_type }}/
           cp ./bin/${{ matrix.package_type }}/luci-app-netshift-*.${{ matrix.package_type }} ./filtered-bin/${{ matrix.package_type }}/
 
@@ -166,10 +135,3 @@ jobs:
           prerelease: false
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body: |
-            NetShift Extended ${{ github.ref_name }}
-
-            - OpenWrt 24.10 (opkg): `*.ipk`
-            - OpenWrt 25.12 (apk): `*.apk`
-
-            Packages: `netshift`, `luci-app-netshift`, `luci-i18n-netshift-ru`

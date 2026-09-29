@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateDomain } from '../validateDomain';
+import { validateDomain, validateDomainRule } from '../validateDomain';
 
 export const validDomains = [
   ['Simple domain', 'example.com'],
@@ -60,4 +60,40 @@ describe('validateDomain', () => {
       });
     },
   );
+});
+
+// Domain-rule fields (Custom domains in the section form) go through
+// validateDomainRule, which forbids a URL path: the backend rule matches a
+// host only, so "example.com/path" must not be accepted by the UI.
+export const domainRuleTests = [
+  ['Lowercase', 'example.com', true],
+  ['Uppercase', 'Example.COM', true],
+  ['Uppercase subdomain', 'Sub.Example.COM', true],
+  ['Punycode', 'xn--d1acufc.xn--p1ai', true],
+  ['With path', 'example.com/path', false],
+  ['With deep path', 'example.com/path/to/resource', false],
+  ['With protocol', 'http://example.com', false],
+  ['No TLD', 'localhost', false],
+];
+
+describe('validateDomainRule', () => {
+  describe.each(domainRuleTests)(
+    'Domain rule: %s',
+    (_desc, domain, expected) => {
+      it(`"${domain}" → valid=${expected}`, () => {
+        const res = validateDomainRule(domain, true);
+        expect(res.valid).toBe(expected);
+      });
+    },
+  );
+
+  it('rejects a path that validateDomain accepts', () => {
+    expect(validateDomain('example.com/path').valid).toBe(true);
+    expect(validateDomainRule('example.com/path').valid).toBe(false);
+  });
+
+  it('keeps the dot-TLD form allowed when allowDotTLD=true', () => {
+    expect(validateDomainRule('.net', true).valid).toBe(true);
+    expect(validateDomainRule('.net', false).valid).toBe(false);
+  });
 });

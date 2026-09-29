@@ -15,6 +15,10 @@ fe-app-netshift/.yarn/
 fe-app-netshift/.yarnrc.yml
 fe-app-netshift/.pnp.*
 agent/
+
+# AI-тулинг — только локально (правила агентов, memory, конфиги; в git не хранится)
 .claude/
 .opencode/
-.pr-review/
+opencode.json
+docs/agent-rules/
+docs/README-AGENTS.md

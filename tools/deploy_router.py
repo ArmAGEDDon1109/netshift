@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Deploy NetShift files to the router over SSH.
+
+Usage:
+  python tools/deploy_router.py [repo_root]
+  python tools/deploy_router.py --no-restart [repo_root]
+
+--no-restart  Copy files only; reload auto-learn monitor without full NetShift
+              restart (keeps SSH/agent connection stable for shell-only changes).
+"""
 import base64
 import subprocess
 import sys
@@ -30,6 +39,18 @@ FILES = [
         "/www/luci-static/resources/view/netshift/auto_learn.js",
     ),
     (
+        r"luci-app-netshift\htdocs\luci-static\resources\view\netshift\settings.js",
+        "/www/luci-static/resources/view/netshift/settings.js",
+    ),
+    (
+        r"luci-app-netshift\htdocs\luci-static\resources\view\netshift\settings.js",
+        "/www/luci-static/resources/view/netshift/settings.js",
+    ),
+    (
+        r"luci-app-netshift\htdocs\luci-static\resources\view\netshift\settings.js",
+        "/www/luci-static/resources/view/netshift/settings.js",
+    ),
+    (
         r"luci-app-netshift\htdocs\luci-static\resources\view\netshift\main.js",
         "/www/luci-static/resources/view/netshift/main.js",
     ),
@@ -37,9 +58,16 @@ FILES = [
         r"luci-app-netshift\root\usr\share\luci\menu.d\luci-app-netshift.json",
         "/usr/share/luci/menu.d/luci-app-netshift.json",
     ),
+    (
+        r"luci-app-netshift\po\ru\netshift.ru.lmo",
+        "/usr/lib/lua/luci/i18n/netshift.ru.lmo",
+    ),
 ]
 
-ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
+args = [a for a in sys.argv[1:] if a.startswith("-")]
+pos_args = [a for a in sys.argv[1:] if not a.startswith("-")]
+no_restart = "--no-restart" in args
+ROOT = pos_args[0] if pos_args else "."
 
 for rel, remote in FILES:
     path = f"{ROOT}/{rel}".replace("\\", "/")
@@ -53,16 +81,25 @@ for rel, remote in FILES:
     )
     print(f"deployed {remote} ({len(data)} bytes)")
 
-subprocess.run(
-    [
-        "ssh",
-        "root@192.168.1.1",
+if no_restart:
+    post_cmd = (
+        "chmod +x /usr/bin/netshift /etc/init.d/netshift "
+        "/opt/zapret/init.d/openwrt/custom.d/90-script.sh "
+        "/usr/lib/netshift/zapret/90-script.sh && "
+        "for p in $(pgrep -f '/usr/bin/netshift __auto_learn_monitor' 2>/dev/null); do kill $p 2>/dev/null; done; "
+        "rm -f /var/run/netshift_auto_learn_monitor.pid; "
+        "setsid /bin/sh -c 'exec /usr/bin/netshift __auto_learn_monitor' </dev/null >/dev/null 2>&1 & "
+        "rm -f /tmp/luci-indexcache*"
+    )
+else:
+    post_cmd = (
         "chmod +x /usr/bin/netshift /etc/init.d/netshift "
         "/opt/zapret/init.d/openwrt/custom.d/90-script.sh "
         "/usr/lib/netshift/zapret/90-script.sh && "
         "/etc/init.d/netshift enable && "
-        "/etc/init.d/netshift restart",
-    ],
-    check=True,
-)
+        "/etc/init.d/netshift restart && "
+        "rm -f /tmp/luci-indexcache*"
+    )
+
+subprocess.run(["ssh", "root@192.168.1.1", post_cmd], check=True)
 subprocess.run(["ssh", "root@192.168.1.1", "netshift get_status; netshift auto_learn status"], check=False)
