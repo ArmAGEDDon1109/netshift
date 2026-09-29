@@ -6981,467 +6981,325 @@ DRVEOF
     rm -rf "$work"
 }
 
-# ─────────────────────────────────────────────────────────────────
-# Test: sing-box cache persistence (selected subscription server survives reboot)
-#
-# ROOT CAUSE under test: the live sing-box cache DB (settings.cache_path) is
-# tmpfs-backed (/tmp/sing-box/cache.db) so a reboot wipes it — and with it the
-# selector choice sing-box persists there (the subscription server the user
-# picked, kept by outbound tag). The fix snapshots the live DB to the overlay
-# (NETSHIFT_CACHE_BACKUP) on a clean stop / after a selection, and restores it
-# on start. This test awk-extracts the SHIPPED helpers verbatim and asserts the
-# snapshot/restore contract end to end:
-#   (1) backup is a no-op until the live DB exists,
-#   (2) backup snapshots the live DB byte-for-byte (atomic tmp+mv, no tmp leak),
-#   (3) restore NEVER clobbers a live DB that survived (reload path: tmpfs intact),
-#   (4) reboot (live gone, snapshot present) -> live restored byte-for-byte,
-#   (5) fresh install (neither present) -> restore is a no-op.
-# ─────────────────────────────────────────────────────────────────
-test_cache_persistence() {
-    header "sing-box Cache Persistence (selected server survives reboot)"
+# Test: selected server survives a reboot (sing-box cache DB copy)
+# ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+test_cache_persist() {
+    header "Selected Server Survives Reboot (sing-box cache DB copy)"
 
-    local bin="${NETSHIFT_SRC}/usr/bin/netshift"
-    local const="${NETSHIFT_LIB_DIR}/constants.sh"
-    if [ ! -r "$bin" ] || [ ! -r "$const" ]; then
-        fail "bin / constants.sh not found"
+    if ! command -v jq > /dev/null 2>&1; then
+        skip "jq not available"
+        return
+    fi
+    if ! command -v flock > /dev/null 2>&1 || ! command -v cmp > /dev/null 2>&1; then
+        skip "flock / cmp not available"
         return
     fi
 
-    local work="/tmp/netshift-cachepersist-$$"
-    rm -rf "$work"
-    mkdir -p "$work"
+    local bin="${NETSHIFT_SRC}/usr/bin/netshift"
+    local lib="${NETSHIFT_LIB_DIR}"
+    if [ ! -r "$bin" ] || [ ! -r "$lib/constants.sh" ]; then
+        skip "netshift bin / constants.sh not found"
+        return
+    fi
 
-    local drv="$work/driver.sh"
+    local drv="/tmp/netshift-cachepersist-$$.sh"
+    local out="/tmp/netshift-cachepersist-$$.out"
     cat > "$drv" << 'CPEOF'
-. "CONST_LIB"
-log() { :; }
+. "LIB_DIR/constants.sh"
 
-W="DRV_WORK"
-# Re-pin the overlay snapshot + state dir at temp paths. constants.sh set them to
-# /etc/netshift/*; the helpers read these globals at call time, so overriding
-# AFTER sourcing is enough.
-NETSHIFT_STATE_DIR="$W/state"
+# Functions under test come VERBATIM from the shipped bin.
+extract() {
+    awk -v f="$1" '$0 ~ "^"f"\\(\\) \\{"{p=1} p{print} p&&/^\}/{exit}' "BIN_PATH"
+}
+eval "$(extract get_sing_box_cache_path)"
+eval "$(extract sing_box_cache_is_volatile)"
+eval "$(extract restore_sing_box_cache)"
+eval "$(extract discard_restored_sing_box_cache)"
+eval "$(extract get_sing_box_selection)"
+eval "$(extract snapshot_sing_box_cache)"
+eval "$(extract monitor_sing_box)"
+eval "$(extract clash_api)"
+
+CP_DIR="/tmp/netshift-cachepersist-state-$$"
+rm -rf "$CP_DIR"
+mkdir -p "$CP_DIR/state"
+NETSHIFT_STATE_DIR="$CP_DIR/state"
 NETSHIFT_CACHE_BACKUP="$NETSHIFT_STATE_DIR/cache.db"
-LIVE="$W/tmp/sing-box/cache.db"
+NETSHIFT_CACHE_SELECTION="$NETSHIFT_STATE_DIR/cache.db.selection"
+NETSHIFT_CACHE_BACKUP_LOCK="$CP_DIR/lock/cache-backup.lock"
+NETSHIFT_CACHE_RESTORED_FLAG="$CP_DIR/run/cache-restored"
+LIVE="$CP_DIR/live/cache.db"
+LOG="$CP_DIR/log"
 
-# Table-driven config_get stub: cache_path -> $LIVE, else the provided default.
+log() { printf '%s %s\n' "${2:-info}" "$1" >> "$LOG"; }
+CFG_CACHE_PATH="$LIVE"
+CFG_LISTEN=""
+CFG_SECRET=""
+CFG_SHUTDOWN="1"
+CFG_LAN_IP="192.168.1.1"
 config_get() {
+    local __v=""
     case "$3" in
-        cache_path) eval "$1=\"$LIVE\"" ;;
-        *) eval "$1=\"\${4:-}\"" ;;
+    cache_path) __v="$CFG_CACHE_PATH" ;;
+    service_listen_address) __v="$CFG_LISTEN" ;;
+    yacd_secret_key) __v="$CFG_SECRET" ;;
+    shutdown_correctly) __v="$CFG_SHUTDOWN" ;;
     esac
-    return 0
+    [ -n "$__v" ] || __v="$4"
+    eval "$1=\$__v"
+}
+config_get_bool() { eval "$1=\"\${4:-0}\""; }
+get_service_listen_address() { printf '%s' "127.0.0.1"; }
+config_load() { :; }
+network_get_ipaddr() { eval "$1=\$CFG_LAN_IP"; }
+
+reset_state() {
+    rm -rf "$CP_DIR/live" "$NETSHIFT_STATE_DIR" "$LOG" "$CP_DIR/run"
+    mkdir -p "$NETSHIFT_STATE_DIR"
+    CFG_CACHE_PATH="$LIVE"
+    CFG_SHUTDOWN="1"
+}
+live_db() {
+    mkdir -p "$(dirname "$LIVE")"
+    printf '%s' "$1" > "$LIVE"
+}
+check() {
+    if eval "$2"; then echo "$1:OK"; else echo "$1:FAIL"; fi
 }
 
-# awk-extract the SHIPPED helpers verbatim (each ends at its column-0 `}`).
-eval "$(awk '/^get_sing_box_cache_path\(\) \{/{p=1} p{print} p&&/^\}/{exit}' "BIN_PATH")"
-eval "$(awk '/^get_sing_box_cache_backup_path\(\) \{/{p=1} p{print} p&&/^\}/{exit}' "BIN_PATH")"
-eval "$(awk '/^restore_sing_box_cache\(\) \{/{p=1} p{print} p&&/^\}/{exit}' "BIN_PATH")"
-eval "$(awk '/^backup_sing_box_cache\(\) \{/{p=1} p{print} p&&/^\}/{exit}' "BIN_PATH")"
-
-# get_sing_box_cache_path returns the configured live path.
-[ "$(get_sing_box_cache_path)" = "$LIVE" ] \
-    && echo 'cache-path-resolved:OK' || echo 'cache-path-resolved:FAIL'
-
-# ── (1) backup is a no-op until the live DB exists ─────────────────────────────
-backup_sing_box_cache
-[ ! -e "$NETSHIFT_CACHE_BACKUP" ] \
-    && echo 'cache-backup-noop-without-live:OK' || echo 'cache-backup-noop-without-live:FAIL'
-
-# ── (2) backup snapshots the live DB byte-for-byte ─────────────────────────────
-mkdir -p "$(dirname "$LIVE")"
-printf 'SELECTED-NODE-CACHE-v1\n' > "$LIVE"
-backup_sing_box_cache
-if [ -f "$NETSHIFT_CACHE_BACKUP" ] && cmp -s "$LIVE" "$NETSHIFT_CACHE_BACKUP"; then
-    echo 'cache-backup-snapshots-live:OK'
-else
-    echo 'cache-backup-snapshots-live:FAIL'
-fi
-# the atomic tmp+mv must leave no stray tmp file behind
-if ls "$NETSHIFT_CACHE_BACKUP".tmp.* >/dev/null 2>&1; then
-    echo 'cache-backup-no-tmp-leak:FAIL'
-else
-    echo 'cache-backup-no-tmp-leak:OK'
-fi
-
-# ── (2b) a second backup of an UNCHANGED live DB must skip the flash write ─────
-# A real write goes through tmp+mv (new inode); a skipped one leaves the inode
-# untouched. Compare inodes to prove the cmp-guard short-circuited.
-ino_before="$(ls -i "$NETSHIFT_CACHE_BACKUP" | awk '{print $1}')"
-backup_sing_box_cache
-ino_after="$(ls -i "$NETSHIFT_CACHE_BACKUP" | awk '{print $1}')"
-[ "$ino_before" = "$ino_after" ] \
-    && echo 'cache-backup-skips-unchanged:OK' || echo 'cache-backup-skips-unchanged:FAIL'
-
-# ── (3) restore must NOT clobber a live DB that survived (reload path) ─────────
-printf 'FRESHER-LIVE-STATE-v2\n' > "$LIVE"
+# ?????? restore_sing_box_cache ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+# R1: no copy on flash -> nothing is created.
+reset_state
 restore_sing_box_cache
-if grep -q 'FRESHER-LIVE-STATE-v2' "$LIVE" 2>/dev/null; then
-    echo 'cache-restore-keeps-live:OK'
-else
-    echo 'cache-restore-keeps-live:FAIL'
-fi
+check cp-restore-without-copy-noop '[ ! -e "$LIVE" ]'
 
-# ── (4) reboot: live DB gone, snapshot present -> restored byte-for-byte ───────
-rm -rf "$(dirname "$LIVE")"
+# R2: reboot wiped tmpfs -> the copy becomes the live DB.
+reset_state
+printf 'saved-db' > "$NETSHIFT_CACHE_BACKUP"
 restore_sing_box_cache
-if [ -f "$LIVE" ] && cmp -s "$LIVE" "$NETSHIFT_CACHE_BACKUP"; then
-    echo 'cache-restore-on-reboot:OK'
-else
-    echo 'cache-restore-on-reboot:FAIL'
-fi
+check cp-restore-after-reboot '[ "$(cat "$LIVE" 2>/dev/null)" = "saved-db" ]'
 
-# ── (5) fresh install: neither live nor snapshot -> restore is a no-op ─────────
-rm -rf "$NETSHIFT_STATE_DIR" "$(dirname "$LIVE")"
+# R3: a live DB that survived a restart is newer -> left alone.
+reset_state
+printf 'saved-db' > "$NETSHIFT_CACHE_BACKUP"
+live_db 'live-db'
 restore_sing_box_cache
-[ ! -e "$LIVE" ] \
-    && echo 'cache-restore-noop-fresh:OK' || echo 'cache-restore-noop-fresh:FAIL'
+check cp-restore-keeps-live-db '[ "$(cat "$LIVE")" = "live-db" ]'
 
-echo 'DONE'
+# R4: cache_path on flash survives a reboot by itself -> no copy is used.
+reset_state
+printf 'saved-db' > "$NETSHIFT_CACHE_BACKUP"
+CFG_CACHE_PATH="$CP_DIR/flash/cache.db"
+sing_box_cache_is_volatile() { return 1; }
+restore_sing_box_cache
+eval "$(extract sing_box_cache_is_volatile)"
+check cp-restore-skips-flash-cache-path '[ ! -e "$CP_DIR/flash/cache.db" ]'
+
+# ?????? sing_box_cache_is_volatile ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+check cp-volatile-tmp 'sing_box_cache_is_volatile /tmp/sing-box/cache.db'
+check cp-volatile-var 'sing_box_cache_is_volatile /var/run/sing-box/cache.db'
+check cp-flash-not-volatile '! sing_box_cache_is_volatile /etc/sing-box/cache.db'
+
+# ?????? get_sing_box_selection ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+PROXIES='{"proxies":{
+  "main-out":{"type":"Selector","now":"node-b","all":["node-a","node-b"]},
+  "alt-out":{"type":"Selector","now":"node-c"},
+  "main-urltest-out":{"type":"URLTest","now":"node-a"},
+  "direct-out":{"type":"Direct"}}}'
+CURL_ARGS="$CP_DIR/curl.args"
+curl() { printf '%s\n' "$@" > "$CURL_ARGS"; printf '%s' "$PROXIES"; }
+
+sel="$(get_sing_box_selection)"
+expected="$(printf 'alt-out\tnode-c\nmain-out\tnode-b')"
+check cp-selection-lists-selectors-only '[ "$sel" = "$expected" ]'
+check cp-selection-uses-lan-address 'grep -qx "http://192.168.1.1:$SB_CLASH_API_CONTROLLER_PORT/proxies" "$CURL_ARGS"'
+check cp-selection-no-auth-without-secret '! grep -q "Authorization" "$CURL_ARGS"'
+
+CFG_SECRET="s3cret"
+CFG_LISTEN="10.0.0.1"
+get_sing_box_selection > /dev/null
+check cp-selection-sends-secret 'grep -qx "Authorization: Bearer s3cret" "$CURL_ARGS"'
+check cp-selection-honours-listen-override 'grep -q "^http://10.0.0.1:" "$CURL_ARGS"'
+CFG_SECRET=""
+CFG_LISTEN=""
+
+curl() { return 7; }
+check cp-selection-empty-when-api-down '[ -z "$(get_sing_box_selection)" ]'
+
+# ?????? snapshot_sing_box_cache ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+SELECTION="$(printf 'main-out\tnode-b')"
+get_sing_box_selection() { [ -n "$SELECTION" ] && printf '%s\n' "$SELECTION"; }
+
+# S1: no live DB yet -> nothing to copy.
+reset_state
+snapshot_sing_box_cache
+check cp-snapshot-without-live-db-noop '[ ! -e "$NETSHIFT_CACHE_BACKUP" ]'
+
+# S2: Clash API down -> the selection is unknown, keep what is on flash.
+reset_state
+live_db 'db-1'
+SELECTION=""
+snapshot_sing_box_cache
+SELECTION="$(printf 'main-out\tnode-b')"
+check cp-snapshot-api-down-noop '[ ! -e "$NETSHIFT_CACHE_BACKUP" ]'
+
+# S3: first selection -> byte-identical copy, selection recorded, mode 600.
+reset_state
+live_db 'db-1'
+snapshot_sing_box_cache
+check cp-snapshot-copies-live-db 'cmp -s "$LIVE" "$NETSHIFT_CACHE_BACKUP"'
+check cp-snapshot-records-selection '[ "$(cat "$NETSHIFT_CACHE_SELECTION")" = "$SELECTION" ]'
+check cp-snapshot-mode-600 '[ "$(ls -l "$NETSHIFT_CACHE_BACKUP" | cut -c1-10)" = "-rw-------" ]'
+check cp-snapshot-no-leftover-tmp '[ ! -e "$NETSHIFT_CACHE_BACKUP.tmp" ] && [ ! -e "$NETSHIFT_CACHE_SELECTION.tmp" ]'
+
+# S4: same selection, DB changed by FakeIP -> no flash write.
+live_db 'db-2-fakeip-churn'
+snapshot_sing_box_cache
+check cp-snapshot-same-selection-no-write '[ "$(cat "$NETSHIFT_CACHE_BACKUP")" = "db-1" ]'
+
+# S5: selection changed -> copy retaken.
+SELECTION="$(printf 'main-out\tnode-a')"
+snapshot_sing_box_cache
+check cp-snapshot-new-selection-rewrites '[ "$(cat "$NETSHIFT_CACHE_BACKUP")" = "db-2-fakeip-churn" ] && [ "$(cat "$NETSHIFT_CACHE_SELECTION")" = "$SELECTION" ]'
+
+# S6: copy from 0.9.3/0.9.4 without a selection file -> retaken once.
+reset_state
+live_db 'db-3'
+printf 'legacy-db' > "$NETSHIFT_CACHE_BACKUP"
+snapshot_sing_box_cache
+check cp-snapshot-legacy-copy-retaken '[ "$(cat "$NETSHIFT_CACHE_BACKUP")" = "db-3" ] && [ -f "$NETSHIFT_CACHE_SELECTION" ]'
+
+# S7: sing-box writes the DB during every copy -> old copy kept, no torn file.
+reset_state
+live_db 'db-4'
+printf 'good-db' > "$NETSHIFT_CACHE_BACKUP"
+cp() { command cp "$@"; printf 'x' >> "$LIVE"; }
+sleep() { :; }
+snapshot_sing_box_cache
+unset -f cp sleep
+check cp-snapshot-unstable-keeps-old-copy '[ "$(cat "$NETSHIFT_CACHE_BACKUP")" = "good-db" ] && [ ! -f "$NETSHIFT_CACHE_SELECTION" ]'
+check cp-snapshot-unstable-no-leftover-tmp '[ ! -e "$NETSHIFT_CACHE_BACKUP.tmp" ]'
+check cp-snapshot-unstable-logs-warn 'grep -q "^warn Could not copy" "$LOG"'
+
+# S8: sing-box writes during the first copy only -> the retry succeeds.
+reset_state
+live_db 'db-5'
+CP_CALLS=0
+cp() { command cp "$@"; CP_CALLS=$((CP_CALLS + 1)); [ "$CP_CALLS" -eq 1 ] && printf 'y' >> "$LIVE"; return 0; }
+sleep() { :; }
+snapshot_sing_box_cache
+unset -f cp sleep
+check cp-snapshot-retry-after-write '[ "$(cat "$NETSHIFT_CACHE_BACKUP")" = "db-5y" ]'
+
+# S9: cache_path on flash -> nothing copied.
+reset_state
+CFG_CACHE_PATH="$CP_DIR/flash/cache.db"
+mkdir -p "$CP_DIR/flash"
+printf 'flash-db' > "$CFG_CACHE_PATH"
+sing_box_cache_is_volatile() { return 1; }
+snapshot_sing_box_cache
+eval "$(extract sing_box_cache_is_volatile)"
+check cp-snapshot-skips-flash-cache-path '[ ! -e "$NETSHIFT_CACHE_BACKUP" ]'
+
+# ?????? monitor_sing_box: periodic check catches dashboard picks ?????????????????????????????????
+# Seven healthy 10 s ticks, then sing-box is gone and the stop was clean.
+MONITOR_PIDFILE="$CP_DIR/monitor.pid"
+MONITOR_CHECK_INTERVAL=10
+MONITOR_CACHE_SNAPSHOT_INTERVAL=60
+TICKS=0
+SNAPSHOTS=0
+sleep() { :; }
+sing_box_process_exists() { TICKS=$((TICKS + 1)); [ "$TICKS" -le 7 ]; }
+snapshot_sing_box_cache() { SNAPSHOTS=$((SNAPSHOTS + 1)); }
+monitor_sing_box
+check cp-monitor-snapshots-once-per-minute '[ "$SNAPSHOTS" = "1" ]'
+
+# ?????? restore marks the cache as restored; a crash then heals it ???????????????????????????
+# H1: a restore records that the cache now running came from the copy.
+reset_state
+printf 'saved-db' > "$NETSHIFT_CACHE_BACKUP"
+restore_sing_box_cache
+check cp-restore-sets-restored-flag '[ -f "$NETSHIFT_CACHE_RESTORED_FLAG" ]'
+
+# H2: a crash after a restore drops the restored DB and the copy, so the next
+#     start is clean instead of failing on the same file after every reboot.
+discard_restored_sing_box_cache
+check cp-heal-drops-restored-cache '[ ! -e "$LIVE" ] && [ ! -e "$NETSHIFT_CACHE_BACKUP" ] && [ ! -e "$NETSHIFT_CACHE_RESTORED_FLAG" ]'
+
+# H3: without a restore this boot, nothing is dropped.
+reset_state
+live_db 'live-db'
+printf 'good-db' > "$NETSHIFT_CACHE_BACKUP"
+discard_restored_sing_box_cache
+check cp-heal-noop-without-restore '[ -e "$LIVE" ] && [ -e "$NETSHIFT_CACHE_BACKUP" ]'
+
+# H4: the monitor heals on the first crash after a restore, not only when the
+#     function is called directly.
+reset_state
+live_db 'live-db'
+printf 'bad-db' > "$NETSHIFT_CACHE_BACKUP"
+mkdir -p "$(dirname "$NETSHIFT_CACHE_RESTORED_FLAG")"
+: > "$NETSHIFT_CACHE_RESTORED_FLAG"
+MONITOR_PIDFILE="$CP_DIR/monitor-heal.pid"
+MONITOR_MAX_CRASHES=1
+CFG_SHUTDOWN="0"
+dnsmasq_restore() { :; }
+sing_box_process_exists() { return 1; }
+monitor_sing_box
+check cp-monitor-heals-restored-cache '[ ! -e "$NETSHIFT_CACHE_BACKUP" ] && [ ! -e "$LIVE" ]'
+
+# ?????? clash_api 204 branch snapshots the cache (the LuCI pick) ?????????????????????????????????
+# A grep of the source cannot tell a real call from a commented-out one, so
+# drive the branch: a successful PATCH answers 204 and must snapshot inline,
+# a 404 must not.
+reset_state
+live_db 'live-db'
+SELECTION="$(printf 'main-out\tnode-a')"
+SNAPSHOTS=0
+snapshot_sing_box_cache() { SNAPSHOTS=$((SNAPSHOTS + 1)); }
+curl() { printf '\n204'; }
+clash_api set_group_proxy main-out node-a > /dev/null 2>&1
+check cp-clash-api-204-snapshots '[ "$SNAPSHOTS" = "1" ]'
+curl() { printf '\n404'; }
+SNAPSHOTS=0
+clash_api set_group_proxy main-out node-a > /dev/null 2>&1
+check cp-clash-api-404-no-snapshot '[ "$SNAPSHOTS" = "0" ]'
+eval "$(extract snapshot_sing_box_cache)"
+
+# ?????? wiring in the shipped bin ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+# An UNCOMMENTED call, not just the token appearing somewhere: a commented-out
+# call must fail these.
+start_body="$(extract start_main)"
+check cp-start-restores-before-sing-box 'printf "%s\n" "$start_body" | awk "/^[[:space:]]*restore_sing_box_cache/{r=NR} /sing-box start/{s=NR} END{exit !(r && s && r < s)}"'
+check cp-set-group-proxy-snapshots 'extract clash_api | awk "/^        204\\)/{p=1} p&&/;;/{exit} p" | grep -qE "^[[:space:]]*snapshot_sing_box_cache"'
+check cp-stop-does-not-snapshot '! extract stop_main | grep -qE "^[[:space:]]*snapshot_sing_box_cache"'
+check cp-monitor-heals-on-crash 'extract monitor_sing_box | grep -qE "^[[:space:]]*discard_restored_sing_box_cache"'
+
+rm -rf "$CP_DIR"
+echo DONE
 CPEOF
-    sed -i "s|CONST_LIB|$const|g; s|BIN_PATH|$bin|g; s|DRV_WORK|$work|g" "$drv"
+    sed -i -e "s|BIN_PATH|$bin|g" -e "s|LIB_DIR|$lib|g" "$drv"
 
-    local out="$work/out.txt"
-    local saw_done=0 line
-    ash "$drv" > "$out" 2>/dev/null || true
+    sh "$drv" > "$out" 2>&1 || true
+
+    local line saw_done=0
     while IFS= read -r line; do
         case "$line" in
-            *:OK)   pass "${line%:OK}" ;;
+            *:OK) pass "${line%:OK}" ;;
             *:FAIL) fail "$line" ;;
-            DONE)   saw_done=1 ;;
-            *) ;;
+            DONE) saw_done=1 ;;
         esac
     done < "$out"
-    [ "$saw_done" = "1" ] && pass "cache-persistence-driver-completed:OK" \
-        || fail "cache-persistence-driver-completed:FAIL (driver aborted early)"
-    rm -rf "$work"
-}
-
-# ─────────────────────────────────────────────────────────────────
-# Test: WAN device auto-detection (d516fda hardening)
-#
-# ROOT CAUSE under test: the 0.9.3 hard-coded probe of
-# `network.interface.wan` broke multi-WAN setups (mwan3 with members
-# wan/wan2/wwan, renamed interfaces like `internet`), and on early boot when
-# ubus hadn't populated the interface yet. The new `detect_wan_device()`
-# resolver tries (in order):
-#   1. ip-route's default-route device (race-free, reboot-safe),
-#   2. ubus by preferred name (wan, wan6, wwan, internet, wan2..5),
-#   3. legacy single-interface probe (`network.interface.wan`) as a final
-#      fallback for 0.8.x setups that named their interface that way,
-#   4. empty output (caller falls back to auto_detect_interface).
-#
-# The driver awk-extracts the SHIPPED helper verbatim from /usr/bin/netshift
-# and stubs the relevant commands to simulate each scenario.
-# ─────────────────────────────────────────────────────────────────
-test_wan_device_autodetect() {
-    header "WAN Device Auto-Detect (d516fda hardening)"
-
-    local bin="${NETSHIFT_SRC}/usr/bin/netshift"
-    if [ ! -r "$bin" ]; then
-        fail "bin not found"
-        return
+    if [ "$saw_done" = "1" ]; then
+        pass "cp-driver-completed"
+    else
+        fail "cp-driver-completed:FAIL (driver aborted early)" "$(tail -5 "$out" 2>/dev/null)"
     fi
 
-    local work="/tmp/netshift-wanautodetect-$$"
-    rm -rf "$work"
-    mkdir -p "$work"
-
-    local drv="$work/driver.sh"
-    cat > "$drv" << 'WANEOF'
-log() { :; }
-
-# stub PATH so the awk-extracted body cannot call the real tooling.
-PATH="/tmp/netshift-wanautodetect-empty-bin-$$:$PATH"
-
-# Resolve a fixture-named command and emit either a fixture value or fail.
-run_fixture() {
-    local cmd="$1"
-    local fixture_var="$2"
-    local val="${!fixture_var}"
-    if [ -z "$val" ]; then
-        return 1
-    fi
-    printf '%s' "$val"
+    rm -f "$drv" "$out"
 }
 
-# Per-test command stubs (set by the case arm before invoking the helper).
-ip() {
-    case "$1 $2" in
-        "route show")
-            [ -n "$FIXTURE_IP_ROUTE" ] && printf 'default via 1.2.3.4 dev %s\n' "$FIXTURE_IP_ROUTE"
-            return 0
-            ;;
-    esac
-    return 0
-}
-
-ubus() {
-    # Match `ubus call network.interface.<iface> status` and emit a fixture if
-    # we have one for that interface name.
-    case "$1 $2" in
-        "call"*)
-            local iface=""
-            for a in "$@"; do
-                case "$a" in
-                    network.interface.*)
-                        iface="${a#network.interface.}"
-                        ;;
-                esac
-            done
-            local v="FIXTURE_UBUS_$(echo "$iface" | tr -c 'A-Za-z0-9' '_')"
-            local resolved="${!v}"
-            if [ -n "$resolved" ]; then
-                printf '{"device":"%s"}\n' "$resolved"
-            fi
-            return 0
-            ;;
-    esac
-    return 0
-}
-
-jq() {
-    # Pass-through jq for our simple `'-r' '.device // empty'` pipeline. Reads
-    # stdin, extracts a key, prints empty on missing.
-    local mode="" key=""
-    for a in "$@"; do
-        case "$a" in
-            -r) mode="r" ;;
-            .*) key="${a#.}" ;;
-        esac
-    done
-    local input
-    input="$(cat)"
-    case "$key" in
-        device|l3_device)
-            input="$(printf '%s' "$input" | sed -n 's/.*"'"$key"'" *: *"\([^"]*\)".*/\1/p')"
-            printf '%s' "$input"
-            ;;
-        *)
-            printf '%s' "$input"
-            ;;
-    esac
-}
-
-# awk-extract the SHIPPED helper verbatim.
-eval "$(awk '/^detect_wan_device\(\) \{/{p=1} p{print} p&&/^\}/{exit}' "BIN_PATH")"
-
-# ── (1) default-route device wins (reboot-safe path) ─────────────────────────
-FIXTURE_IP_ROUTE="wan0"
-out="$(detect_wan_device 2>/dev/null)"
-[ "$out" = "wan0" ] \
-    && echo 'wan-default-route-wins:OK' || echo "wan-default-route-wins:FAIL ($out)"
-
-# ── (2) ubus-by-name wins when default-route fixture is empty ───────────────
-unset FIXTURE_IP_ROUTE
-FIXTURE_UBUS_wwan="wwan0"
-out="$(detect_wan_device 2>/dev/null)"
-[ "$out" = "wwan0" ] \
-    && echo 'wan-ubus-by-name-wwan:OK' || echo "wan-ubus-by-name-wwan:FAIL ($out)"
-
-# ── (3) renamed interface "internet" is found via the preferred-name list ──
-unset FIXTURE_UBUS_wwan
-FIXTURE_UBUS_internet="eth1"
-out="$(detect_wan_device 2>/dev/null)"
-[ "$out" = "eth1" ] \
-    && echo 'wan-renamed-internet:OK' || echo "wan-renamed-internet:FAIL ($out)"
-
-# ── (4) multi-WAN: first preferred member wins (mwan3 / wan2) ────────────────
-unset FIXTURE_UBUS_internet
-FIXTURE_UBUS_wan2="wan2-iface"
-out="$(detect_wan_device 2>/dev/null)"
-[ "$out" = "wan2-iface" ] \
-    && echo 'wan-multi-wan-wan2:OK' || echo "wan-multi-wan-wan2:FAIL ($out)"
-
-# ── (5) legacy fallback: only network.interface.wan known → still resolves ──
-unset FIXTURE_UBUS_wan2
-FIXTURE_UBUS_wan="legacy-wan"
-out="$(detect_wan_device 2>/dev/null)"
-[ "$out" = "legacy-wan" ] \
-    && echo 'wan-legacy-fallback:OK' || echo "wan-legacy-fallback:FAIL ($out)"
-
-# ── (6) nothing resolves → empty (caller falls back to auto_detect_interface) ─
-unset FIXTURE_UBUS_wan
-out="$(detect_wan_device 2>/dev/null)"
-[ -z "$out" ] \
-    && echo 'wan-empty-fallback:OK' || echo "wan-empty-fallback:FAIL ($out)"
-
-echo 'DONE'
-WANEOF
-    sed -i "s|BIN_PATH|$bin|g" "$drv"
-
-    local out="$work/out.txt"
-    local saw_done=0 line
-    ash "$drv" > "$out" 2>/dev/null || true
-    while IFS= read -r line; do
-        case "$line" in
-            *:OK)   pass "${line%:OK}" ;;
-            *:FAIL) fail "$line" ;;
-            DONE)   saw_done=1 ;;
-            *) ;;
-        esac
-    done < "$out"
-    [ "$saw_done" = "1" ] && pass "wan-autodetect-driver-completed:OK" \
-        || fail "wan-autodetect-driver-completed:FAIL (driver aborted early)"
-    rm -rf "$work"
-}
-
-# ─────────────────────────────────────────────────────────────────
-# Test: cache_backup race guard + cache_path syncing (912e192 hardening)
-#
-# ROOT CAUSE under test: the 0.9.3 PR #21 cache.db persistence wrote to a
-# fixed `$NETSHIFT_STATE_DIR/cache.db` regardless of the user's actual
-# `settings.cache_path`, and two concurrent clash_api PATCHes both ran the
-# cp+mv dance redundantly on flash. The fix (a) routes the backup path to
-# `get_sing_box_cache_backup_path` so the file follows the live path (with a
-# legacy compatibility shim for the default path → $NETSHIFT_STATE_DIR/cache.db
-# to preserve 0.9.3 selections across upgrade), and (b) wraps backup_sing_box_cache
-# in flock($NETSHIFT_CACHE_BACKUP_LOCK) so concurrent PATCHes serialise. The
-# test awk-extracts the SHIPPED helpers verbatim and asserts:
-#   (1) default cache_path → backup at the legacy location (0.9.3 migration),
-#   (2) custom cache_path → backup next to it (path syncing),
-#   (3) two concurrent backup_sing_box_cache calls leave the lockfile untouched,
-#   (4) the cmp-guard still short-circuits an unchanged live DB under lock.
-# ─────────────────────────────────────────────────────────────────
-test_cache_backup_path_and_lock() {
-    header "Cache backup path sync + concurrent-PATCH lock (912e192 hardening)"
-
-    local bin="${NETSHIFT_SRC}/usr/bin/netshift"
-    local const="${NETSHIFT_LIB_DIR}/constants.sh"
-    if [ ! -r "$bin" ] || [ ! -r "$const" ]; then
-        fail "bin / constants.sh not found"
-        return
-    fi
-
-    local work="/tmp/netshift-cachebackup-$$"
-    rm -rf "$work"
-    mkdir -p "$work"
-
-    local drv="$work/driver.sh"
-    cat > "$drv" << 'CBEOF'
-. "CONST_LIB"
-log() { :; }
-
-W="DRV_WORK"
-NETSHIFT_STATE_DIR="$W/state"
-mkdir -p "$NETSHIFT_STATE_DIR"
-NETSHIFT_CACHE_BACKUP="$NETSHIFT_STATE_DIR/cache.db"
-NETSHIFT_CACHE_BACKUP_LOCK="$NETSHIFT_STATE_DIR/cache.db.lock"
-
-# config_get stub: route the UCI lookup for `cache_path` to a per-test env var
-# so we can drive (1) default vs (2) custom without rewriting the helper.
-config_get() {
-    case "$3" in
-        cache_path) eval "$1=\"\${UCI_CACHE_PATH:-/tmp/sing-box/cache.db}\"" ;;
-        *) eval "$1=\"\${4:-}\"" ;;
-    esac
-    return 0
-}
-
-# awk-extract the SHIPPED helpers verbatim.
-eval "$(awk '/^get_sing_box_cache_path\(\) \{/{p=1} p{print} p&&/^\}/{exit}' "BIN_PATH")"
-eval "$(awk '/^get_sing_box_cache_backup_path\(\) \{/{p=1} p{print} p&&/^\}/{exit}' "BIN_PATH")"
-eval "$(awk '/^backup_sing_box_cache\(\) \{/{p=1} p{print; if (/^\}/) exit}' "BIN_PATH")"
-
-# ── (1) default live path → backup at legacy $NETSHIFT_CACHE_BACKUP ─────────
-UCI_CACHE_PATH="/tmp/sing-box/cache.db"
-got="$(get_sing_box_cache_backup_path)"
-[ "$got" = "$NETSHIFT_CACHE_BACKUP" ] \
-    && echo 'cache-backup-default-legacy-loc:OK' || echo "cache-backup-default-legacy-loc:FAIL ($got)"
-
-# ── (2) custom cache_path → backup follows the live basename ────────────────
-UCI_CACHE_PATH="/etc/sing-box/cache.db"
-got="$(get_sing_box_cache_backup_path)"
-[ "$got" = "$NETSHIFT_STATE_DIR/cache.db" ] \
-    && echo 'cache-backup-custom-follows-basename:OK' || echo "cache-backup-custom-follows-basename:FAIL ($got)"
-
-# ── (3) custom cache_path with a different basename → distinct backup file ─
-UCI_CACHE_PATH="/opt/custom/selector-cache.db"
-got="$(get_sing_box_cache_backup_path)"
-[ "$got" = "$NETSHIFT_STATE_DIR/selector-cache.db" ] \
-    && echo 'cache-backup-custom-basename:OK' || echo "cache-backup-custom-basename:FAIL ($got)"
-
-# Reset UCI cache_path to the default so the rest of the test runs against the
-# legacy location (where restore_sing_box_cache and the live 0.9.3 snapshot
-# still expect it).
-UCI_CACHE_PATH="/tmp/sing-box/cache.db"
-
-# ── (4) two concurrent backup_sing_box_cache calls serialise under flock ───
-mkdir -p "$(dirname "$UCI_CACHE_PATH")"
-printf 'STATE-v1\n' > "$UCI_CACHE_PATH"
-( backup_sing_box_cache ) &
-( backup_sing_box_cache ) &
-wait
-# After both finish the backup must equal the live DB (idempotent result).
-if cmp -s "$UCI_CACHE_PATH" "$NETSHIFT_CACHE_BACKUP"; then
-    echo 'cache-backup-concurrent-idempotent:OK'
-else
-    echo 'cache-backup-concurrent-idempotent:FAIL'
-fi
-# The lock must NOT be held after both processes exit: a fresh flock on the
-# same path MUST succeed (not block waiting forever on a stale fd). Busybox
-# flock leaves an empty regular file behind — that's harmless (flock still
-# acquires/releases correctly); what would break is a held LOCK, not a left
-# FILE. Verify the latter via a non-blocking flock probe.
-if (
-    flock -n 9 || exit 1
-) 9>"$NETSHIFT_CACHE_BACKUP_LOCK" 2>/dev/null; then
-    echo 'cache-backup-lockfile-released:OK'
-else
-    echo 'cache-backup-lockfile-released:FAIL (lock held by stale holder)'
-fi
-
-# ── (5) cmp-guard short-circuits unchanged live DB under the lock ───────────
-ino_before="$(ls -i "$NETSHIFT_CACHE_BACKUP" 2>/dev/null | awk '{print $1}')"
-backup_sing_box_cache
-ino_after="$(ls -i "$NETSHIFT_CACHE_BACKUP" 2>/dev/null | awk '{print $1}')"
-if [ -n "$ino_before" ] && [ "$ino_before" = "$ino_after" ]; then
-    echo 'cache-backup-cmp-guard-under-lock:OK'
-else
-    echo 'cache-backup-cmp-guard-under-lock:FAIL'
-fi
-
-# ── (6) NETSHIFT_CACHE_BACKUP_LOCK unset → fallback to <backup>.lock ────────
-# Simulates a stale/partial install where the new constants.sh was not pushed
-# alongside the binary. The function MUST NOT abort with "can't create :
-# nonexistent directory" — it must pick a fallback lock next to the snapshot
-# and still complete the snapshot.
-unset NETSHIFT_CACHE_BACKUP_LOCK
-rm -f "$NETSHIFT_CACHE_BACKUP.lock" 2>/dev/null
-printf 'STATE-fallback\n' > "$UCI_CACHE_PATH"
-backup_sing_box_cache
-if cmp -s "$UCI_CACHE_PATH" "$NETSHIFT_CACHE_BACKUP"; then
-    echo 'cache-backup-stale-constants-fallback:OK'
-else
-    echo 'cache-backup-stale-constants-fallback:FAIL'
-fi
-
-# ── (7) empty backup_path → no-op, no crash ────────────────────────────────
-# Drives the helper to emit an empty string (config_get stubbed to empty)
-# and asserts the function returns 0 without creating any file or error.
-UCI_CACHE_PATH=""
-backup_sing_box_cache && echo 'cache-backup-empty-backup-path-noop:OK' \
-    || echo 'cache-backup-empty-backup-path-noop:FAIL'
-
-echo 'DONE'
-CBEOF
-    sed -i "s|CONST_LIB|$const|g; s|BIN_PATH|$bin|g; s|DRV_WORK|$work|g" "$drv"
-
-    local out="$work/out.txt"
-    local saw_done=0 line
-    ash "$drv" > "$out" 2>/dev/null || true
-    while IFS= read -r line; do
-        case "$line" in
-            *:OK)   pass "${line%:OK}" ;;
-            *:FAIL) fail "$line" ;;
-            DONE)   saw_done=1 ;;
-            *) ;;
-        esac
-    done < "$out"
-    [ "$saw_done" = "1" ] && pass "cache-backup-driver-completed:OK" \
-        || fail "cache-backup-driver-completed:FAIL (driver aborted early)"
-    rm -rf "$work"
-}
+# ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
 # ─────────────────────────────────────────────────────────────────
 # Test: auto-learn state + zapret adapter helpers
@@ -7693,9 +7551,8 @@ main() {
             test_github_redirect_tag
             test_self_update_netshift
             test_backup_integrity
-            test_cache_persistence
+            test_cache_persist
             test_wan_device_autodetect
-            test_cache_backup_path_and_lock
             test_auto_learn
             ;;
         deps)        test_deps ;;
@@ -7726,16 +7583,15 @@ main() {
         ghredirect)  test_github_redirect_tag ;;
         selfupdate)  test_self_update_netshift ;;
         backupguard) test_backup_integrity ;;
-        cachepersist) test_cache_persistence ;;
+        cachepersist) test_cache_persist ;;
         wanautodetect) test_wan_device_autodetect ;;
-        cachebackuplock) test_cache_backup_path_and_lock ;;
         autolearn)     test_auto_learn ;;
         jq)          test_jq_helpers ;;
         cm)          test_config_manager ;;
         sb)          test_sing_box_config ;;
         *)
             echo "Unknown test: $target"
-            echo "Available: all deps syntax config helpers jq cm sb nft nftv6 selmark isolation monfd unsupported textlist diagnostics subscription fastest insecure rejected jobstate selfheal dnsdetour suburlopt globalproxy stablecheck extcheck netshiftcheck latesttag ghredirect selfupdate backupguard cachepersist wanautodetect cachebackuplock autolearn"
+            echo "Available: all deps syntax config helpers jq cm sb nft nftv6 selmark isolation monfd unsupported textlist diagnostics subscription fastest insecure rejected jobstate selfheal dnsdetour suburlopt globalproxy stablecheck extcheck netshiftcheck latesttag ghredirect selfupdate backupguard cachepersist wanautodetect autolearn"
             exit 1
             ;;
     esac
