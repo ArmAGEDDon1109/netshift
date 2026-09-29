@@ -1,8 +1,15 @@
-name: Build packages
+name: Release packages
+
 on:
   push:
     tags:
-      - '*'
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. 0.9.10)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -35,42 +42,53 @@ jobs:
           fetch-depth: 0
       - id: version
         run: |
-          VERSION=$(git describe --tags --exact-match 2>/dev/null || echo "0.$(date +%d%m%Y)")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION=$(git describe --tags --exact-match 2>/dev/null || echo "0.$(date +%d%m%Y)")
+          fi
+          VERSION="${VERSION#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Builder for ${{ matrix.package_type }} netshift and luci-app-netshift
+    name: OpenWrt ${{ matrix.openwrt_version }} (${{ matrix.package_type }})
     runs-on: ubuntu-latest
     needs:
       - preparation
       - smoke-tests
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - { package_type: ipk }
-          - { package_type: apk }
+          - package_type: ipk
+            openwrt_version: '24.10'
+            dockerfile: Dockerfile-ipk
+          - package_type: apk
+            openwrt_version: '25.12'
+            dockerfile: Dockerfile-apk
     steps:
       - uses: actions/checkout@v5.0.0
         with:
           fetch-depth: 0
 
-      - name: Build ${{ matrix.package_type }}
+      - name: Build ${{ matrix.package_type }} (OpenWrt ${{ matrix.openwrt_version }})
         uses: docker/build-push-action@v6.18.0
         with:
-          file: ./Dockerfile-${{ matrix.package_type }}
+          file: ./${{ matrix.dockerfile }}
           context: .
           tags: netshift:ci-${{ matrix.package_type }}
+          load: true
           build-args: |
             NETSHIFT_VERSION=${{ needs.preparation.outputs.version }}
 
       - name: Create ${{ matrix.package_type }} Docker container
-        run: docker create --name ${{ matrix.package_type }} netshift:ci-${{ matrix.package_type }}
+        run: docker create --name ${{ matrix.package_type }}-${{ matrix.openwrt_version }} netshift:ci-${{ matrix.package_type }}
 
       - name: Copy files from ${{ matrix.package_type }} Docker container
         run: |
           mkdir -p ./bin/${{ matrix.package_type }}
-          docker cp ${{ matrix.package_type }}:/builder/bin/packages/x86_64/utilities/. ./bin/${{ matrix.package_type }}/
-          docker cp ${{ matrix.package_type }}:/builder/bin/packages/x86_64/luci/. ./bin/${{ matrix.package_type }}/
+          docker cp ${{ matrix.package_type }}-${{ matrix.openwrt_version }}:/builder/bin/packages/x86_64/utilities/. ./bin/${{ matrix.package_type }}/
+          docker cp ${{ matrix.package_type }}-${{ matrix.openwrt_version }}:/builder/bin/packages/x86_64/luci/. ./bin/${{ matrix.package_type }}/
 
         # IPK uses underscore `_` in filenames, while APK uses only dash `-`
       - name: Fix naming difference between build for packages (replace _ with -)
@@ -96,12 +114,12 @@ jobs:
           cp ./bin/${{ matrix.package_type }}/luci-app-netshift-*.${{ matrix.package_type }} ./filtered-bin/${{ matrix.package_type }}/
 
       - name: Remove Docker container
-        run: docker rm ${{ matrix.package_type }}
+        run: docker rm ${{ matrix.package_type }}-${{ matrix.openwrt_version }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: release-files-${{ github.ref_name }}-${{ matrix.package_type }}
+          name: release-files-${{ needs.preparation.outputs.version }}-${{ matrix.package_type }}
           path: ./filtered-bin/${{ matrix.package_type }}/*.${{ matrix.package_type }}
           retention-days: 1
           if-no-files-found: error
@@ -109,29 +127,52 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - preparation
+      - build
     steps:
       - uses: actions/checkout@v5.0.0
       - name: Create release dir
-        run: mkdir -p ./filtered-bin/release
+        run: |
+          mkdir -p ./filtered-bin/release/openwrt-24.10 ./filtered-bin/release/openwrt-25.12
 
-      - name: Download ipk artifacts
+      - name: Download ipk artifacts (OpenWrt 24.10)
         uses: actions/download-artifact@v4
         with:
-          name: release-files-${{ github.ref_name }}-ipk
-          path: ./filtered-bin/release
+          name: release-files-${{ needs.preparation.outputs.version }}-ipk
+          path: ./filtered-bin/release/openwrt-24.10
 
-      - name: Download apk artifacts
+      - name: Download apk artifacts (OpenWrt 25.12)
         uses: actions/download-artifact@v4
         with:
-          name: release-files-${{ github.ref_name }}-apk
-          path: ./filtered-bin/release
+          name: release-files-${{ needs.preparation.outputs.version }}-apk
+          path: ./filtered-bin/release/openwrt-25.12
 
       - name: Release
         uses: softprops/action-gh-release@v2.4.0
         with:
-          files: ./filtered-bin/release/*.*
+          files: |
+            ./filtered-bin/release/openwrt-24.10/*
+            ./filtered-bin/release/openwrt-25.12/*
           draft: false
           prerelease: false
-          name: ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
+          name: ${{ needs.preparation.outputs.version }}
+          tag_name: ${{ needs.preparation.outputs.version }}
+          generate_release_notes: true
+          body: |
+            ## Пакеты
+
+            | OpenWrt | Формат | Каталог в релизе |
+            | --- | --- | --- |
+            | **24.10.x** | `.ipk` (opkg) | `openwrt-24.10/` |
+            | **25.12.x** | `.apk` (apk) | `openwrt-25.12/` |
+
+            В каждой папке три файла: `netshift`, `luci-app-netshift`, `luci-i18n-netshift-ru`.
+
+            ### Установка с роутера
+
+            ```sh
+            sh -c "$(wget -O - https://raw.githubusercontent.com/ArmAGEDDon1109/netshift/refs/heads/main/install.sh)"
+            ```
+
+            Скрипт сам выберет `.ipk` или `.apk` по установленному менеджеру пакетов.

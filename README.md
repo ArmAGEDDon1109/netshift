@@ -344,7 +344,7 @@ uci commit netshift
 
 ## История изменений
 
-Полный список изменений по версиям - на странице [Releases](https://github.com/yandexru45/netshift/releases). Анонсы обновлений публикуются в [Telegram-канале](https://t.me/netshift_news).
+Полный список изменений по версиям - на странице [Releases](https://github.com/ArmAGEDDon1109/netshift/releases) (OpenWrt **24.10** — `.ipk`, **25.12** — `.apk`). Анонсы обновлений публикуются в [Telegram-канале](https://t.me/netshift_news).
 
 Коротко о крупных вехах:
 
