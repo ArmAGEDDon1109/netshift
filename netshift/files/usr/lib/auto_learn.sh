@@ -239,7 +239,10 @@ auto_learn_collect_target_section_domain_suffixes() {
     auto_learn_collect_ruleset_domain_suffixes "$section" "remote" "domains"
     auto_learn_collect_ruleset_domain_suffixes "$section" "$AUTO_LEARN_RULESET_NAME" "domains"
 
-    sort -u "$aggfile" -o "$aggfile"
+    if [ -s "$aggfile" ]; then
+        sort -u "$aggfile" > "${aggfile}.sorted"
+        mv "${aggfile}.sorted" "$aggfile"
+    fi
     unset AUTO_LEARN_SUFFIX_AGG_FILE
 }
 

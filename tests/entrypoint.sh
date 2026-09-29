@@ -7662,6 +7662,9 @@ jq -e '.domains[] | select(.name == "api2.cursor.sh" and .stage == "already_rout
     && echo 'autolearn-section-list-state:OK' || echo 'autolearn-section-list-state:FAIL'
 
 rm -f "$ruleset_filepath"
+ruleset_tag="$(get_ruleset_tag main auto-learned domains)"
+ruleset_filepath="$TMP_RULESET_FOLDER/$ruleset_tag.json"
+rm -f "$ruleset_filepath"
 auto_learn_ensure_ruleset_file && [ -f "$ruleset_filepath" ] && echo 'autolearn-ensure-ruleset:OK' || echo 'autolearn-ensure-ruleset:FAIL'
 
 auto_learn_is_http_reachable_code "404" && echo 'autolearn-http-404-ok:OK' || echo 'autolearn-http-404-ok:FAIL'
