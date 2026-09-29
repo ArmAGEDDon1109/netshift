@@ -74,6 +74,7 @@ jobs:
               [ -e "$f" ] || continue
               base=$(basename "$f")
               newname=$(echo "$base" | sed 's/_/-/g')
+              [ "$base" = "$newname" ] && continue
               mv "$f" "./artifacts/${{ matrix.package_format }}/$newname"
             done
           fi

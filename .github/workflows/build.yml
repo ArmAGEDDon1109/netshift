@@ -99,6 +99,7 @@ jobs:
             [ -e "$f" ] || continue
             base=$(basename "$f")
             newname=$(echo "$base" | sed 's/_/-/g')
+            [ "$base" = "$newname" ] && continue
             mv "$f" "./bin/${{ matrix.package_type }}/$newname"
           done
 
