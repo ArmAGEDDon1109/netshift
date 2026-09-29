@@ -1289,12 +1289,13 @@ sing_box_cm_add_route_rule() {
         --arg tag "$tag" \
         --arg inbound "$inbound" \
         --arg outbound "$outbound" \
-        '.route.rules += [{
+        'if any(.route.rules[]; .[$service_tag] == $tag) then .
+        else .route.rules += [{
             action: "route",
             inbound: $inbound,
             outbound: $outbound,
             $service_tag: $tag
-        }]'
+        }] end'
 }
 
 #######################################
@@ -1420,11 +1421,12 @@ sing_box_cm_add_reject_route_rule() {
         --arg service_tag "$SERVICE_TAG" \
         --arg tag "$tag" \
         --arg inbound "$inbound" \
-        '.route.rules += [{
+        'if any(.route.rules[]; .[$service_tag] == $tag) then .
+        else .route.rules += [{
             action: "reject",
             inbound: $inbound,
             $service_tag: $tag
-        }]'
+        }] end'
 }
 
 #######################################

@@ -4768,6 +4768,18 @@ DRVEOF
     export SELFHEAL_CORE_VERSION="$work/core.version"
     export SELFHEAL_BIN="$work/usr-bin-sing-box"
 
+    # The fake sing-box core must be runnable: the stable path probes
+    # $UPDATES_SING_BOX_BIN version instead of trusting get_sing_box_version().
+    make_fake_core() {
+        cat > "$SELFHEAL_BIN" << COREEOF
+#!/bin/sh
+# core-marker: ${1:-PLAIN-CORE-BYTES}
+[ "\$1" = "version" ] || exit 1
+printf 'sing-box version %s\n' "\$(cat "\$SELFHEAL_CORE_VERSION" 2>/dev/null)"
+COREEOF
+        chmod 0755 "$SELFHEAL_BIN"
+    }
+
     local out="$work/out.json"
 
     run_scenario() {
@@ -4782,7 +4794,7 @@ DRVEOF
     : > "$SELFHEAL_DNS_OK"; : > "$SELFHEAL_HTTP_OK"; : > "$SELFHEAL_PKG_OK"
     printf 'extended-1.12.0\n' > "$SELFHEAL_CORE_VERSION"
     printf 'original-resolver\n' > "$work/resolv.conf"
-    : > "$work/usr-bin-sing-box"
+    make_fake_core
     run_scenario
     if jq -e '.success == true' "$out" > /dev/null 2>&1; then
         pass "selfheal-preflight-pass-proceeds:OK"
@@ -4810,7 +4822,7 @@ DRVEOF
     rm -f "$SELFHEAL_DNS_OK"; : > "$SELFHEAL_HTTP_OK"; : > "$SELFHEAL_PKG_OK"
     printf 'extended-1.12.0\n' > "$SELFHEAL_CORE_VERSION"
     printf 'original-resolver\n' > "$work/resolv.conf"
-    : > "$work/usr-bin-sing-box"
+    make_fake_core
     # dig stub variant for scenario 2: DNS resolves only once resolv.conf holds
     # the temp resolver (i.e. after the heal wrote it).
     cat > "$work/bin/dig" << 'DIG2EOF'
@@ -4846,7 +4858,7 @@ DIG2EOF
     rm -f "$SELFHEAL_DNS_OK"; rm -f "$SELFHEAL_HTTP_OK"; : > "$SELFHEAL_PKG_OK"
     printf 'extended-1.12.0\n' > "$SELFHEAL_CORE_VERSION"
     printf 'original-resolver\n' > "$work/resolv.conf"
-    : > "$work/usr-bin-sing-box"
+    make_fake_core
     # DNS resolves only with temp resolver present (as scenario 2).
     # HTTP succeeds only after init stop has been recorded.
     cat > "$work/bin/curl" << 'CURL3EOF'
@@ -4881,7 +4893,7 @@ CURL3EOF
     rm -f "$SELFHEAL_DNS_OK"; rm -f "$SELFHEAL_HTTP_OK"; : > "$SELFHEAL_PKG_OK"
     printf 'extended-1.12.0\n' > "$SELFHEAL_CORE_VERSION"
     printf 'original-resolver\n' > "$work/resolv.conf"
-    : > "$work/usr-bin-sing-box"
+    make_fake_core
     # DNS never resolves; HTTP never reachable even after teardown.
     cat > "$work/bin/dig" << 'DIG4EOF'
 #!/bin/sh
@@ -4921,7 +4933,7 @@ CURL4EOF
     : > "$SELFHEAL_DNS_OK"; : > "$SELFHEAL_HTTP_OK"; rm -f "$SELFHEAL_PKG_OK"
     printf 'extended-1.12.0\n' > "$SELFHEAL_CORE_VERSION"
     printf 'original-resolver\n' > "$work/resolv.conf"
-    printf 'EXTENDED-CORE-BYTES\n' > "$work/usr-bin-sing-box"
+    make_fake_core EXTENDED-CORE-BYTES
     # Connectivity is fine; dig/curl just check the markers.
     cat > "$work/bin/dig" << 'DIG5EOF'
 #!/bin/sh
@@ -4942,8 +4954,7 @@ CURL5EOF
     fi
     # The opkg stub removed the live binary; the tmpfs backup must be restored
     # so a working binary remains with the ORIGINAL extended bytes.
-    if [ -e "$work/usr-bin-sing-box" ] && \
-            [ "$(cat "$work/usr-bin-sing-box" 2>/dev/null)" = "EXTENDED-CORE-BYTES" ]; then
+    if grep -q 'core-marker: EXTENDED-CORE-BYTES' "$work/usr-bin-sing-box" 2>/dev/null; then
         pass "selfheal-stable-install-fail-backup-restored:OK"
     else
         fail "selfheal-stable-install-fail-backup-restored:FAIL" "$(cat "$work/usr-bin-sing-box" 2>/dev/null)"
