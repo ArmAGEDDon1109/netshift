@@ -7536,6 +7536,14 @@ config_get() {
                 *) eval "$1=\"\${4:-}\"" ;;
             esac
             ;;
+        main)
+            case "$3" in
+                user_domain_list_type) eval "$1=\"\${AL_USER_LIST_TYPE:-disabled}\"" ;;
+                user_domains_text) eval "$1=\"\${AL_USER_DOMAINS_TEXT:-}\"" ;;
+                user_domains) eval "$1=\"\${AL_USER_DOMAINS:-}\"" ;;
+                *) eval "$1=\"\${4:-}\"" ;;
+            esac
+            ;;
         *) eval "$1=\"\${4:-}\"" ;;
     esac
 }
@@ -7545,6 +7553,14 @@ config_get_bool() {
     case "$(eval echo \"\$$1\")" in
         1|true|yes) eval "$1=1" ;;
         *) eval "$1=0" ;;
+    esac
+}
+
+config_list_foreach() {
+    case "$2" in
+    local_domain_lists)
+        [ -n "${AL_LOCAL_DOMAIN_LIST:-}" ] && "$3" "$AL_LOCAL_DOMAIN_LIST"
+        ;;
     esac
 }
 
@@ -7619,6 +7635,32 @@ parsed="$(auto_learn_parse_dnsmasq_query_line "$line")"
 auto_learn_domain_ready_for_probe "fresh.example" && echo 'autolearn-ready-new:OK' || echo 'autolearn-ready-new:FAIL'
 auto_learn_domain_ready_for_probe "example.com" && echo 'autolearn-ready-netshift:FAIL' || echo 'autolearn-ready-netshift:OK'
 
+AL_USER_LIST_TYPE=text
+AL_USER_DOMAINS_TEXT="api2.cursor.sh
+cursor.sh"
+auto_learn_domain_covered_by_target_section_lists "api2.cursor.sh" \
+    && echo 'autolearn-section-list-exact:OK' || echo 'autolearn-section-list-exact:FAIL'
+auto_learn_domain_covered_by_target_section_lists "api5.cursor.sh" \
+    && echo 'autolearn-section-list-suffix:OK' || echo 'autolearn-section-list-suffix:FAIL'
+auto_learn_domain_covered_by_target_section_lists "other.example" \
+    && echo 'autolearn-section-list-negative:FAIL' || echo 'autolearn-section-list-negative:OK'
+
+local_list_file="__NS_WORK__/local-domains.txt"
+printf '%s\n' 'from-local.example' > "$local_list_file"
+AL_LOCAL_DOMAIN_LIST="$local_list_file"
+auto_learn_domain_covered_by_target_section_lists "sub.from-local.example" \
+    && echo 'autolearn-section-list-local-file:OK' || echo 'autolearn-section-list-local-file:FAIL'
+
+ruleset_tag="$(get_ruleset_tag main user domains)"
+ruleset_filepath="$TMP_RULESET_FOLDER/$ruleset_tag.json"
+jq -n --arg d 'ruleset-only.example' '{version: 3, rules: [{domain_suffix: [$d]}]}' > "$ruleset_filepath"
+auto_learn_domain_covered_by_target_section_lists "api.ruleset-only.example" \
+    && echo 'autolearn-section-list-ruleset:OK' || echo 'autolearn-section-list-ruleset:FAIL'
+
+auto_learn_domain_ready_for_probe "api2.cursor.sh" && echo 'autolearn-ready-section-list:FAIL' || echo 'autolearn-ready-section-list:OK'
+jq -e '.domains[] | select(.name == "api2.cursor.sh" and .stage == "already_routed")' "$AUTO_LEARN_STATE_FILE" >/dev/null \
+    && echo 'autolearn-section-list-state:OK' || echo 'autolearn-section-list-state:FAIL'
+
 rm -f "$ruleset_filepath"
 auto_learn_ensure_ruleset_file && [ -f "$ruleset_filepath" ] && echo 'autolearn-ensure-ruleset:OK' || echo 'autolearn-ensure-ruleset:FAIL'
 
@@ -7659,6 +7701,13 @@ ALEOF
     echo "$out" | grep -q 'autolearn-dns-parse:OK' && pass "auto-learn dnsmasq parse" || fail "auto-learn dnsmasq parse" "$out"
     echo "$out" | grep -q 'autolearn-ready-new:OK' && pass "auto-learn probe readiness (new)" || fail "auto-learn probe readiness (new)" "$out"
     echo "$out" | grep -q 'autolearn-ready-netshift:OK' && pass "auto-learn probe readiness (skip netshift)" || fail "auto-learn probe readiness (skip netshift)" "$out"
+    echo "$out" | grep -q 'autolearn-section-list-exact:OK' && pass "auto-learn section list exact match" || fail "auto-learn section list exact match" "$out"
+    echo "$out" | grep -q 'autolearn-section-list-suffix:OK' && pass "auto-learn section list suffix match" || fail "auto-learn section list suffix match" "$out"
+    echo "$out" | grep -q 'autolearn-section-list-negative:OK' && pass "auto-learn section list negative" || fail "auto-learn section list negative" "$out"
+    echo "$out" | grep -q 'autolearn-section-list-local-file:OK' && pass "auto-learn section local list file" || fail "auto-learn section local list file" "$out"
+    echo "$out" | grep -q 'autolearn-section-list-ruleset:OK' && pass "auto-learn section built ruleset" || fail "auto-learn section built ruleset" "$out"
+    echo "$out" | grep -q 'autolearn-ready-section-list:OK' && pass "auto-learn skip probe for section lists" || fail "auto-learn skip probe for section lists" "$out"
+    echo "$out" | grep -q 'autolearn-section-list-state:OK' && pass "auto-learn section list state" || fail "auto-learn section list state" "$out"
     echo "$out" | grep -q 'autolearn-ensure-ruleset:OK' && pass "auto-learn ensure ruleset file" || fail "auto-learn ensure ruleset file" "$out"
     echo "$out" | grep -q 'autolearn-http-404-ok:OK' && pass "auto-learn HTTP 404 is reachable" || fail "auto-learn HTTP 404 is reachable" "$out"
     echo "$out" | grep -q 'autolearn-http-000-fail:OK' && pass "auto-learn HTTP 000 is blocked" || fail "auto-learn HTTP 000 is blocked" "$out"

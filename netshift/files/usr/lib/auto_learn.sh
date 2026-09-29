@@ -83,8 +83,16 @@ auto_learn_domain_ready_for_probe() {
         return 1
     fi
 
+    if auto_learn_domain_covered_by_target_section_lists "$domain"; then
+        auto_learn_mark_already_routed_in_section "$domain"
+        return 1
+    fi
+
     stage="$(auto_learn_get_domain_stage "$domain")"
     case "$stage" in
+    already_routed)
+        return 1
+        ;;
     ""|failed)
         if [ -n "$stage" ]; then
             updated_at="$(auto_learn_get_domain_updated_at "$domain")"
@@ -160,6 +168,107 @@ auto_learn_domain_ends_with_suffix() {
     *."$suffix") return 0 ;;
     esac
     return 1
+}
+
+# User domain list for the auto-learn target section (same source as configure_user_domain_list).
+auto_learn_collect_section_user_domain_suffixes() {
+    local section="$1"
+    local user_domain_list_type items
+
+    config_get user_domain_list_type "$section" "user_domain_list_type" "disabled"
+    case "$user_domain_list_type" in
+    disabled) return 0 ;;
+    dynamic) config_get items "$section" "user_domains" ;;
+    text) config_get items "$section" "user_domains_text" ;;
+    *) return 0 ;;
+    esac
+
+    parse_domain_or_subnet_string_to_commas_string "$items" "domains"
+}
+
+auto_learn_append_comma_suffixes_to_file() {
+    local aggfile="$1"
+    local items="$2"
+
+    [ -n "$items" ] || return 0
+    printf '%s' "$items" | tr ',' '\n' >> "$aggfile"
+}
+
+auto_learn_collect_local_domain_list_handler() {
+    local filepath="$1"
+    local part
+
+    if ! file_exists "$filepath"; then
+        return 0
+    fi
+    part="$(parse_domain_or_subnet_file_to_comma_string "$filepath" "domains")"
+    auto_learn_append_comma_suffixes_to_file "$AUTO_LEARN_SUFFIX_AGG_FILE" "$part"
+}
+
+auto_learn_collect_ruleset_domain_suffixes() {
+    local section="$1"
+    local name="$2"
+    local type="$3"
+    local ruleset_tag ruleset_filepath
+
+    ruleset_tag="$(get_ruleset_tag "$section" "$name" "$type")"
+    ruleset_filepath="$TMP_RULESET_FOLDER/$ruleset_tag.json"
+    [ -f "$ruleset_filepath" ] || return 0
+
+    jq -r '.rules[]? | .domain_suffix[]?' "$ruleset_filepath" 2>/dev/null \
+        >> "$AUTO_LEARN_SUFFIX_AGG_FILE"
+}
+
+# All domain_suffix entries that route the auto-learn target section (UCI + list files + built rulesets).
+# Community geosite lists (.srs) are remote binary rulesets and are not expanded here.
+auto_learn_collect_target_section_domain_suffixes() {
+    local section="$1"
+    local aggfile="$2"
+    local items
+
+    : > "$aggfile"
+    AUTO_LEARN_SUFFIX_AGG_FILE="$aggfile"
+
+    items="$(auto_learn_collect_section_user_domain_suffixes "$section")"
+    auto_learn_append_comma_suffixes_to_file "$aggfile" "$items"
+
+    config_list_foreach "$section" "local_domain_lists" auto_learn_collect_local_domain_list_handler
+
+    auto_learn_collect_ruleset_domain_suffixes "$section" "user" "domains"
+    auto_learn_collect_ruleset_domain_suffixes "$section" "local" "domains"
+    auto_learn_collect_ruleset_domain_suffixes "$section" "remote" "domains"
+    auto_learn_collect_ruleset_domain_suffixes "$section" "$AUTO_LEARN_RULESET_NAME" "domains"
+
+    sort -u "$aggfile" -o "$aggfile"
+    unset AUTO_LEARN_SUFFIX_AGG_FILE
+}
+
+auto_learn_domain_covered_by_target_section_lists() {
+    local domain="$1"
+    local section aggfile rule
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    section="$(auto_learn_get_target_section)" || return 1
+
+    aggfile="$(mktemp)"
+    auto_learn_collect_target_section_domain_suffixes "$section" "$aggfile"
+
+    while IFS= read -r rule; do
+        [ -n "$rule" ] || continue
+        if auto_learn_domain_ends_with_suffix "$domain" "$rule"; then
+            rm -f "$aggfile"
+            return 0
+        fi
+    done < "$aggfile"
+    rm -f "$aggfile"
+    return 1
+}
+
+auto_learn_mark_already_routed_in_section() {
+    local domain="$1"
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+    auto_learn_upsert_domain "$domain" "already_routed" "section_domain_lists"
 }
 
 auto_learn_should_skip_candidate() {
@@ -484,7 +593,9 @@ auto_learn_probe_raw_direct() {
     auto_learn_probe_tls "$domain"
 }
 
-# Reachability with Zapret desync active (domain not in exclude list).
+# Reachability with Zapret desync active. Only meaningful when the domain is NOT
+# in the exclude list — never strip exclude for a probe (manual or auto-learn
+# entries must stay; removing them can break working sites).
 auto_learn_probe_with_desync() {
     local domain="$1"
 
@@ -492,9 +603,7 @@ auto_learn_probe_with_desync() {
 
     if auto_learn_zapret_enabled && zapret_adapter_is_installed && zapret_adapter_has_api; then
         if zapret_adapter_is_excluded "$domain"; then
-            zapret_adapter_remove_exclude "$domain"
-            zapret_adapter_apply_now
-            sleep "$AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC"
+            return 1
         fi
     fi
 
@@ -545,6 +654,12 @@ auto_learn_process_domain() {
     if ! auto_learn_is_enabled; then
         echo '{"success":false,"message":"auto-learn disabled"}'
         return 1
+    fi
+
+    if auto_learn_domain_covered_by_target_section_lists "$domain"; then
+        auto_learn_mark_already_routed_in_section "$domain"
+        echo "{\"success\":true,\"stage\":\"already_routed\",\"domain\":\"$domain\",\"message\":\"already in section domain lists\"}"
+        return 0
     fi
 
     # 1) TLS with Zapret desync off (exclude list). Keep exclude when TLS succeeds.
