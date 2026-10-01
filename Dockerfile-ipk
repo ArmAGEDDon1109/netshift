@@ -10,9 +10,10 @@ ENV NETSHIFT_VERSION=${NETSHIFT_VERSION}
 COPY ./netshift /builder/package/feeds/utilities/netshift
 COPY ./luci-app-netshift /builder/package/feeds/luci/luci-app-netshift
 
-# Refresh LuCI i18n from JS (auto_learn.js etc.) so luci-i18n-netshift-ru matches UI.
+# Rebuild .lmo from committed po/ru before package compile (po2lmo from luci-base host).
 RUN cd /builder/package/feeds/luci/luci-app-netshift && \
-    bash xgettext.sh && bash msgmerge.sh ru
+    PO2LMO="$(find /builder/staging_dir -path '*/bin/po2lmo' -type f 2>/dev/null | head -n1)" && \
+    test -n "$PO2LMO" && "$PO2LMO" po/ru/netshift.po po/ru/netshift.ru.lmo
 
 # Both packages are arch-independent (PKGARCH:=all) and compile nothing, so
 # NO_DEPS=1 skips building their dependency trees (kernel modules, sing-box, ...).
