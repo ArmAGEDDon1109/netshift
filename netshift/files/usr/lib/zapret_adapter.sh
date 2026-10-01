@@ -129,17 +129,10 @@ zapret_adapter_apply_now() {
     fi
 }
 
+# Refresh Zapret hostlists after exclude edits. nfqws on OpenWrt does not reliably
+# reload on SIGHUP; signaling it can leave zapret in "running (1/2)" — use init reload.
 zapret_adapter_apply_hostlist() {
-    local pid
-
-    pid="$(pidof nfqws 2>/dev/null)"
-    if [ -n "$pid" ]; then
-        for pid in $pid; do
-            kill -HUP "$pid" 2>/dev/null || true
-        done
-        return 0
-    fi
-    zapret_adapter_apply_now
+    zapret_adapter_apply_debounced
 }
 
 zapret_adapter_apply_debounced() {

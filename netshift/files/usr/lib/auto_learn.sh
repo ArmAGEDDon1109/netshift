@@ -29,7 +29,7 @@ auto_learn_state_unlock() {
     fi
     AUTO_LEARN_LOCK_DEPTH=$((AUTO_LEARN_LOCK_DEPTH - 1))
     if [ "$AUTO_LEARN_LOCK_DEPTH" -eq 0 ] && command -v flock >/dev/null 2>&1; then
-        flock -u 219 2>/dev/null || true
+        flock -u 9 2>/dev/null || true
     fi
 }
 
@@ -712,7 +712,7 @@ auto_learn_probe_tls_with_zapret_exclude() {
     fi
 
     zapret_adapter_add_exclude "$domain"
-    zapret_adapter_apply_hostlist
+    zapret_adapter_apply_now
     sleep "$AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC"
     added_for_probe=1
 
@@ -722,7 +722,7 @@ auto_learn_probe_tls_with_zapret_exclude() {
 
     if [ "$added_for_probe" -eq 1 ]; then
         zapret_adapter_remove_exclude "$domain"
-        zapret_adapter_apply_hostlist
+        zapret_adapter_apply_now
         sleep "$AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC"
     fi
 
@@ -1281,9 +1281,9 @@ auto_learn_monitor_tick() {
 monitor_auto_learn() {
     auto_learn_ensure_runtime_dir
     mkdir -p /var/run
-    exec 218>"$AUTO_LEARN_MONITOR_PIDFILE.lock"
+    exec 8>"$AUTO_LEARN_MONITOR_PIDFILE.lock"
     if command -v flock >/dev/null 2>&1; then
-        flock -n 218 || exit 0
+        flock -n 8 || exit 0
     fi
     echo $$ > "$AUTO_LEARN_MONITOR_PIDFILE"
 
