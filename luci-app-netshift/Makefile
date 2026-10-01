@@ -24,8 +24,6 @@ define Package/$(PKG_NAME)/install
 	$(CP) $(PKG_BUILD_DIR)/htdocs/* $(1)$(HTDOCS)/
 	$(INSTALL_DIR) $(1)/
 	$(CP) $(PKG_BUILD_DIR)/root/* $(1)/
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
-	$(CP) $(PKG_BUILD_DIR)/po/ru/netshift.ru.lmo $(1)/usr/lib/lua/luci/i18n/netshift.ru.lmo
 	sed -i -e 's/__COMPILED_VERSION_VARIABLE__/$(PKG_VERSION)/g' $(1)$(HTDOCS)/luci-static/resources/view/netshift/main.js || true
 endef
 
