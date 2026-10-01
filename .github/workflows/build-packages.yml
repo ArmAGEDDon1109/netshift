@@ -84,11 +84,19 @@ jobs:
       - name: Filter release packages
         run: |
           PKG_FMT="${{ matrix.package_format }}"
+          VERSION="${{ needs.preparation.outputs.version }}"
           mkdir -p "./filtered-bin/${PKG_FMT}"
 
-          cp "./artifacts/${PKG_FMT}/luci-i18n-netshift-ru-"*".${PKG_FMT}" "./filtered-bin/${PKG_FMT}/"
-          cp "./artifacts/${PKG_FMT}/netshift-"*".${PKG_FMT}" "./filtered-bin/${PKG_FMT}/"
-          cp "./artifacts/${PKG_FMT}/luci-app-netshift-"*".${PKG_FMT}" "./filtered-bin/${PKG_FMT}/"
+          shopt -s nullglob
+          for f in "./artifacts/${PKG_FMT}/"*.${PKG_FMT}; do
+            base="$(basename "$f")"
+            case "$base" in
+            *lan-dns*|*-test-*|*lan-dns-test*) continue ;;
+            netshift-"${VERSION}"-*) cp "$f" "./filtered-bin/${PKG_FMT}/" ;;
+            luci-app-netshift-"${VERSION}"-*) cp "$f" "./filtered-bin/${PKG_FMT}/" ;;
+            luci-i18n-netshift-ru-*) cp "$f" "./filtered-bin/${PKG_FMT}/luci-i18n-netshift-ru-${VERSION}.${PKG_FMT}" ;;
+            esac
+          done
 
           ls -la "./filtered-bin/${PKG_FMT}/"
 

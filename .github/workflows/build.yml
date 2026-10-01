@@ -132,16 +132,25 @@ jobs:
           i18n_copied=
           for f in "${i18n[@]}"; do
             case "$(basename "$f")" in
-              *"${VERSION}"*)
-                cp "$f" "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${ext}"
-                i18n_copied=1
-                break
-                ;;
+            *lan-dns*|*-test-*|*lan-dns-test*) continue ;;
+            *"${VERSION}"*)
+              cp "$f" "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${ext}"
+              i18n_copied=1
+              break
+              ;;
             esac
           done
           if [ -z "$i18n_copied" ] && [ ${#i18n[@]} -gt 0 ]; then
-            # LuCI i18n PKG_VERSION is feed date-based, not NETSHIFT_VERSION — pick largest artifact (fresh build).
-            best="$(ls -S "${i18n[@]}" | head -n1)"
+            # LuCI i18n PKG_VERSION is feed date-based, not NETSHIFT_VERSION — pick largest non-test artifact.
+            best=""
+            for f in $(ls -S "${i18n[@]}"); do
+              case "$(basename "$f")" in
+              *lan-dns*|*-test-*|*lan-dns-test*) continue ;;
+              esac
+              best="$f"
+              break
+            done
+            [ -n "$best" ] || { echo "No valid luci-i18n-netshift-ru package found"; exit 1; }
             cp "$best" "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${ext}"
             i18n_copied=1
           fi
@@ -201,6 +210,37 @@ jobs:
         with:
           name: release-files-${{ github.run_id }}-apk
           path: ./filtered-bin/release/openwrt-25.12
+
+      - name: Prune non-release packages
+        shell: bash
+        run: |
+          VERSION="${{ needs.preparation.outputs.version }}"
+          find ./filtered-bin/release -type f | while read -r f; do
+            base="$(basename "$f")"
+            case "$base" in
+            *lan-dns*|*-test-*|*lan-dns-test*) rm -f "$f" ;;
+            netshift-"${VERSION}"-*) ;;
+            luci-app-netshift-"${VERSION}"-*) ;;
+            luci-i18n-netshift-ru-"${VERSION}".*) ;;
+            *) rm -f "$f" ;;
+            esac
+          done
+          echo "Release files:"
+          find ./filtered-bin/release -type f -print
+
+      - name: Clear stale GitHub release assets (re-tag)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${{ needs.preparation.outputs.version }}"
+          if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release view "$VERSION" --json assets -q '.assets[].name' | while read -r name; do
+            [ -n "$name" ] || continue
+            gh release delete-asset "$VERSION" "$name" -y || true
+          done
 
       - name: Release
         uses: softprops/action-gh-release@v3.0.3

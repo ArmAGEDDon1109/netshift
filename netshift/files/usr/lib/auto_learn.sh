@@ -568,13 +568,37 @@ auto_learn_resolve_via_dnsmasq_ipv4() {
     return 1
 }
 
+# DNS resolvers for WAN-side A lookups (direct TLS with --resolve). Aligns with probe DNS UCI when set.
+auto_learn_probe_wan_dns_list() {
+    local mode custom gw
+
+    mode="$(auto_learn_get_probe_dns_mode)"
+    case "$mode" in
+    custom)
+        custom="$(auto_learn_get_probe_dns_custom)"
+        if [ -n "$custom" ]; then
+            echo "$custom"
+            return 0
+        fi
+        ;;
+    gateway)
+        gw="$(auto_learn_get_probe_lan_gateway)"
+        if [ -n "$gw" ]; then
+            echo "$gw"
+            return 0
+        fi
+        ;;
+    esac
+    echo "$AUTO_LEARN_PROBE_DNS_SERVERS"
+}
+
 # Resolve A record via upstream DNS (not router dnsmasq/FakeIP).
 auto_learn_resolve_real_ipv4() {
     local domain="$1"
     local dns ip
 
     domain="$(auto_learn_normalize_domain "$domain")"
-    for dns in $AUTO_LEARN_PROBE_DNS_SERVERS; do
+    for dns in $(auto_learn_probe_wan_dns_list); do
         ip="$(dig +short +time=3 +tries=1 "@$dns" A "$domain" 2>/dev/null \
             | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
         if [ -n "$ip" ] && ! auto_learn_is_fakeip_address "$ip"; then
@@ -623,13 +647,9 @@ auto_learn_tls_probe_ok() {
     domain="$(auto_learn_normalize_domain "$domain")"
 
     if [ -n "$proxy_url" ]; then
-        ip="$(auto_learn_resolve_real_ipv4 "$domain")"
-        resolve_args=""
-        if [ -n "$ip" ]; then
-            resolve_args="--resolve ${domain}:443:${ip}"
-        fi
+        # Mixed inbound routes to the tunnel outbound; use hostname + HEAD (CDN bodies can timeout).
         curl -4 -m "$AUTO_LEARN_CURL_TIMEOUT" --connect-timeout 5 \
-            --max-redirs 0 -sS -x "$proxy_url" $resolve_args \
+            --max-redirs 0 -sS --head -x "$proxy_url" \
             -o /dev/null "https://${domain}/" 2>/dev/null
         rc=$?
         auto_learn_curl_tls_handshake_ok "$rc"
@@ -813,7 +833,7 @@ auto_learn_domain_should_enqueue_from_dns() {
 
 auto_learn_probe_via_service_proxy() {
     local domain="$1"
-    local code proxy_url
+    local proxy_url
 
     domain="$(auto_learn_normalize_domain "$domain")"
     if ! sing_box_process_exists; then
@@ -822,6 +842,33 @@ auto_learn_probe_via_service_proxy() {
 
     proxy_url="http://$SB_SERVICE_MIXED_INBOUND_ADDRESS:$SB_SERVICE_MIXED_INBOUND_PORT"
     auto_learn_tls_probe_ok "$domain" "$proxy_url"
+}
+
+# True when routing through NetShift would work for a LAN client (mixed proxy or hot-patch + veth).
+auto_learn_probe_netshift_tunnel_ok() {
+    local domain="$1" section patched=0
+
+    domain="$(auto_learn_normalize_domain "$domain")"
+
+    if auto_learn_probe_via_service_proxy "$domain"; then
+        return 0
+    fi
+
+    section="$(auto_learn_get_target_section)" || return 1
+    if ! auto_learn_hotpatch_ruleset "$section" "$domain"; then
+        return 1
+    fi
+    patched=1
+    sleep 1
+
+    if auto_learn_probe_tls_direct_client "$domain"; then
+        return 0
+    fi
+
+    if [ "$patched" -eq 1 ]; then
+        auto_learn_remove_from_ruleset "$section" "$domain"
+    fi
+    return 1
 }
 
 auto_learn_unroute_domain_if_needed() {
@@ -907,8 +954,8 @@ auto_learn_process_domain() {
         return 0
     fi
 
-    # 3) Still blocked — route through NetShift only if VPN TLS path works.
-    if ! auto_learn_probe_via_service_proxy "$domain"; then
+    # 3) Still blocked — route through NetShift only if tunnel TLS works (mixed proxy or LAN path after hot-patch).
+    if ! auto_learn_probe_netshift_tunnel_ok "$domain"; then
         auto_learn_upsert_domain "$domain" "failed" "unreachable"
         echo "{\"success\":false,\"stage\":\"failed\",\"domain\":\"$domain\",\"message\":\"unreachable direct and via proxy\"}"
         return 1
