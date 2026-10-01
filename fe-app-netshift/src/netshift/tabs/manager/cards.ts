@@ -200,7 +200,7 @@ function netshiftCard(
 
   return {
     key: 'netshift',
-    title: 'NetShift',
+    title: _('NetShift'),
     version: normalizeCompiledVersion(systemInfo.netshift_version),
     installed: true,
     tag: getCheckTag(status),

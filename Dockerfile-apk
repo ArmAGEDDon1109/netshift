@@ -10,6 +10,10 @@ ENV NETSHIFT_VERSION=${NETSHIFT_VERSION}
 COPY ./netshift /builder/package/feeds/utilities/netshift
 COPY ./luci-app-netshift /builder/package/feeds/luci/luci-app-netshift
 
+RUN cd /builder/package/feeds/luci/luci-app-netshift && \
+    chmod +x xgettext.sh msgmerge.sh && \
+    ./xgettext.sh && ./msgmerge.sh ru
+
 # Both packages are arch-independent (PKGARCH:=all) and compile nothing, so
 # NO_DEPS=1 skips building their dependency trees (kernel modules, sing-box, ...).
 # apk treats '-' in the upstream version as the release separator.
