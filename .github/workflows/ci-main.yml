@@ -28,6 +28,8 @@ jobs:
         uses: redhat-plumbers-in-action/differential-shellcheck@v5.5.5
         with:
           severity: error
+          # After force-push the push "before" SHA is often unreachable; scan full tree on push.
+          strict-check-on-push: true
           include-path: |
             netshift/files/usr/bin/netshift
             netshift/files/usr/lib/**.sh

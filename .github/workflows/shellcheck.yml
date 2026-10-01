@@ -42,6 +42,7 @@ jobs:
         uses: redhat-plumbers-in-action/differential-shellcheck@v5.5.5
         with:
           severity: error
+          strict-check-on-push: true
           include-path: |
             netshift/files/usr/bin/netshift
             netshift/files/usr/lib/**.sh
