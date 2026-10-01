@@ -1343,6 +1343,64 @@ monitor_auto_learn() {
     done
 }
 
+auto_learn_list_domains_failed_unreachable() {
+    auto_learn_init_state_file
+    jq -r '.domains[] | select(.stage == "failed" and .reason == "unreachable") | .name' \
+        "$AUTO_LEARN_STATE_FILE" 2>/dev/null | sort -u
+}
+
+# Re-run full auto-learn classification for domains previously marked failed/unreachable.
+auto_learn_reprobe_unreachable_json() {
+    local limit="${1:-0}"
+    local domain count=0 probed=0 netshift=0 still_failed=0 resolved=0
+    local tmpresults probe_out stage row_tmp
+
+    if ! auto_learn_is_enabled; then
+        echo '{"success":false,"message":"auto-learn disabled"}'
+        return 1
+    fi
+
+    case "$limit" in
+    ''|0) limit=0 ;;
+    *[!0-9]*) limit=0 ;;
+    esac
+
+    tmpresults="$(mktemp)"
+    echo '[]' > "$tmpresults"
+
+    for domain in $(auto_learn_list_domains_failed_unreachable); do
+        [ -n "$domain" ] || continue
+        if [ "$limit" -gt 0 ] && [ "$count" -ge "$limit" ]; then
+            break
+        fi
+        count=$((count + 1))
+        probe_out="$(auto_learn_process_domain "$domain" 2>/dev/null)" \
+            || probe_out="{\"success\":false,\"stage\":\"failed\",\"domain\":\"$domain\"}"
+        stage="$(echo "$probe_out" | jq -r '.stage // empty' 2>/dev/null)"
+        case "$stage" in
+        netshift) netshift=$((netshift + 1)) ;;
+        failed) still_failed=$((still_failed + 1)) ;;
+        *) resolved=$((resolved + 1)) ;;
+        esac
+        probed=$((probed + 1))
+        row_tmp="$(mktemp)"
+        if ! jq --argjson row "$probe_out" '. + [$row]' "$tmpresults" > "$row_tmp" 2>/dev/null; then
+            rm -f "$row_tmp"
+            continue
+        fi
+        mv "$row_tmp" "$tmpresults"
+    done
+
+    jq -n \
+        --argjson probed "$probed" \
+        --argjson netshift "$netshift" \
+        --argjson still_failed "$still_failed" \
+        --argjson resolved "$resolved" \
+        --slurpfile results "$tmpresults" \
+        '{success: true, probed: $probed, netshift: $netshift, still_failed: $still_failed, resolved: $resolved, results: $results[0]}'
+    rm -f "$tmpresults"
+}
+
 auto_learn_cli() {
     local action="${1:-}"
     local arg="${2:-}"
@@ -1382,6 +1440,9 @@ auto_learn_cli() {
     purge-skipped)
         auto_learn_purge_skipped_domains
         echo '{"success":true}'
+        ;;
+    reprobe-unreachable)
+        auto_learn_reprobe_unreachable_json "$arg"
         ;;
     clear-log)
         auto_learn_clear_probe_log

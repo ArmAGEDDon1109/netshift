@@ -444,6 +444,9 @@ function initDomainListMounts() {
     const refreshBtn = frame.querySelector('[data-action="refresh-domains"]');
     const clearBtn = frame.querySelector('[data-action="clear-domains"]');
     const clearLogBtn = frame.querySelector('[data-action="clear-log"]');
+    const reprobeUnreachableBtn = frame.querySelector(
+      '[data-action="reprobe-unreachable"]',
+    );
 
     if (refreshBtn) {
       refreshBtn.addEventListener("click", function (ev) {
@@ -497,6 +500,36 @@ function initDomainListMounts() {
           })
           .catch(function (err) {
             ui.addNotification(null, E("p", {}, String(err)));
+          });
+      });
+    }
+
+    if (reprobeUnreachableBtn) {
+      reprobeUnreachableBtn.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        reprobeUnreachableBtn.disabled = true;
+        fetchAutoLearnJson(["reprobe-unreachable"])
+          .then(function (data) {
+            const probed = data && data.probed ? data.probed : 0;
+            const netshift = data && data.netshift ? data.netshift : 0;
+            const stillFailed =
+              data && data.still_failed ? data.still_failed : 0;
+            const resolved = data && data.resolved ? data.resolved : 0;
+            const summary = _(
+              "Re-probed %1 unreachable domain(s): %2 routed via NetShift, %3 resolved without tunnel, %4 still failed.",
+            )
+              .replace("%1", String(probed))
+              .replace("%2", String(netshift))
+              .replace("%3", String(resolved))
+              .replace("%4", String(stillFailed));
+            ui.addNotification(null, E("p", {}, summary));
+            return refreshAutoLearnFrame(frame);
+          })
+          .catch(function (err) {
+            ui.addNotification(null, E("p", {}, String(err)));
+          })
+          .finally(function () {
+            reprobeUnreachableBtn.disabled = false;
           });
       });
     }
@@ -728,6 +761,9 @@ function createAutoLearnContent(section) {
       '<div style="margin-bottom:0.5em;">' +
       '<button type="button" class="cbi-button cbi-button-remove" data-action="clear-log">' +
       _("Clear log") +
+      "</button> " +
+      '<button type="button" class="cbi-button cbi-button-apply" data-action="reprobe-unreachable">' +
+      _("Re-probe unreachable") +
       "</button>" +
       "</div>" +
       '<div class="ns-auto-learn-domains__log"></div>' +

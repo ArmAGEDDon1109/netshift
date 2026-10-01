@@ -7744,6 +7744,11 @@ auto_learn_should_skip_candidate "router" && echo 'autolearn-skip-unqualified:OK
 auto_learn_should_skip_candidate "device.home.arpa" && echo 'autolearn-skip-home-arpa:OK' || echo 'autolearn-skip-home-arpa:FAIL'
 auto_learn_should_skip_candidate "api.messenger.yandex.net" && echo 'autolearn-skip-yandex:OK' || echo 'autolearn-skip-yandex:FAIL'
 auto_learn_should_skip_candidate "ya.ru" && echo 'autolearn-skip-ya-ru:OK' || echo 'autolearn-skip-ya-ru:FAIL'
+auto_learn_upsert_domain "cdn.unreach.test" "failed" "unreachable"
+auto_learn_upsert_domain "cdn.tlsfail.test" "failed" "tunnel_tls_fail"
+auto_learn_list_domains_failed_unreachable | grep -qx 'cdn.unreach.test' \
+    && ! auto_learn_list_domains_failed_unreachable | grep -qx 'cdn.tlsfail.test' \
+    && echo 'autolearn-list-unreachable:OK' || echo 'autolearn-list-unreachable:FAIL'
 ALEOF
 
     sed -i "s|__NS_WORK__|$work|g" "$drv"
@@ -7788,6 +7793,7 @@ ALEOF
     echo "$out" | grep -q 'autolearn-skip-home-arpa:OK' && pass "auto-learn skip .home.arpa" || fail "auto-learn skip .home.arpa" "$out"
     echo "$out" | grep -q 'autolearn-skip-yandex:OK' && pass "auto-learn skip yandex" || fail "auto-learn skip yandex" "$out"
     echo "$out" | grep -q 'autolearn-skip-ya-ru:OK' && pass "auto-learn skip ya.ru" || fail "auto-learn skip ya.ru" "$out"
+    echo "$out" | grep -q 'autolearn-list-unreachable:OK' && pass "auto-learn list unreachable failed" || fail "auto-learn list unreachable failed" "$out"
     echo "$out" | grep -q 'autolearn-skip-ru-negative:OK' && pass "auto-learn non-.ru not skipped" || fail "auto-learn non-.ru not skipped" "$out"
     rm -rf "$work"
 }

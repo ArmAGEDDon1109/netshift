@@ -6167,7 +6167,7 @@ Available commands:
     component_action_async  Start component_action in background; echoes a job_id
                             (use with component_action_status to poll the outcome)
     component_action_status Report an async component action by job_id: <job_id>
-    auto_learn               Auto-learn: status|list|zapret-excludes|zapret-excludes-count|probe|add|remove|clear|clear-log|purge-skipped|zapret-status|deploy-zapret
+    auto_learn               Auto-learn: status|list|zapret-excludes|zapret-excludes-count|probe|add|remove|clear|clear-log|purge-skipped|reprobe-unreachable|zapret-status|deploy-zapret
 EOF
 }
 

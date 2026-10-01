@@ -242,6 +242,12 @@ msgstr "Имена в zapret-hosts-user-exclude.txt (desync выкл.). По у�
 msgid "Clear log"
 msgstr "Очистить журнал"
 
+msgid "Re-probe unreachable"
+msgstr "Перепроверить unreachable"
+
+msgid "Re-probed %1 unreachable domain(s): %2 routed via NetShift, %3 resolved without tunnel, %4 still failed."
+msgstr "Перепроверено %1 домен(ов) unreachable: %2 через NetShift, %3 без туннеля, %4 снова failed."
+
 msgid "Cleared detection log"
 msgstr "Журнал проверок очищен"
 
