@@ -129,11 +129,21 @@ jobs:
             ls -la "./bin/${{ matrix.package_type }}/" || true
             exit 1
           fi
+          i18n_copied=
           for f in "${i18n[@]}"; do
             case "$(basename "$f")" in
-              *"${VERSION}"*) cp "$f" "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${ext}"; break ;;
+              *"${VERSION}"*)
+                cp "$f" "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${ext}"
+                i18n_copied=1
+                break
+                ;;
             esac
           done
+          if [ -z "$i18n_copied" ]; then
+            echo "luci-i18n-netshift-ru package matching version ${VERSION} not found"
+            ls -la "./bin/${{ matrix.package_type }}/" || true
+            exit 1
+          fi
           shopt -s nullglob
           netshift_pkgs=(./bin/${{ matrix.package_type }}/netshift-"${VERSION}"-*."${ext}")
           luci_pkgs=(./bin/${{ matrix.package_type }}/luci-app-netshift-"${VERSION}"-*."${ext}")

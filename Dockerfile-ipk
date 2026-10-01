@@ -12,10 +12,11 @@ COPY ./luci-app-netshift /builder/package/feeds/luci/luci-app-netshift
 
 # Refresh LuCI i18n from JS (auto_learn.js etc.) so luci-i18n-netshift-ru matches UI.
 RUN cd /builder/package/feeds/luci/luci-app-netshift && \
-    chmod +x xgettext.sh msgmerge.sh && \
-    ./xgettext.sh && ./msgmerge.sh ru
+    bash xgettext.sh && bash msgmerge.sh ru
 
 # Both packages are arch-independent (PKGARCH:=all) and compile nothing, so
 # NO_DEPS=1 skips building their dependency trees (kernel modules, sing-box, ...).
-RUN make package/netshift/compile NO_DEPS=1 -j4 V=s && \
+RUN make package/luci-i18n-netshift-ru/clean V=s 2>/dev/null || true && \
+    make package/luci-app-netshift/clean V=s 2>/dev/null || true && \
+    make package/netshift/compile NO_DEPS=1 -j4 V=s && \
     make package/luci-app-netshift/compile NO_DEPS=1 -j4 V=s
