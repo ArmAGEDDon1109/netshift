@@ -139,8 +139,14 @@ jobs:
                 ;;
             esac
           done
+          if [ -z "$i18n_copied" ] && [ ${#i18n[@]} -gt 0 ]; then
+            # LuCI i18n PKG_VERSION is feed date-based, not NETSHIFT_VERSION — pick largest artifact (fresh build).
+            best="$(ls -S "${i18n[@]}" | head -n1)"
+            cp "$best" "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${ext}"
+            i18n_copied=1
+          fi
           if [ -z "$i18n_copied" ]; then
-            echo "luci-i18n-netshift-ru package matching version ${VERSION} not found"
+            echo "luci-i18n-netshift-ru package not found in ./bin/${{ matrix.package_type }}/"
             ls -la "./bin/${{ matrix.package_type }}/" || true
             exit 1
           fi
