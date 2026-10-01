@@ -15,9 +15,9 @@ auto_learn_state_lock() {
     if [ "$AUTO_LEARN_LOCK_DEPTH" -eq 0 ]; then
         mkdir -p /var/run
         touch "$AUTO_LEARN_STATE_LOCK" 2>/dev/null || true
-        exec 219>"$AUTO_LEARN_STATE_LOCK"
+        exec 9>"$AUTO_LEARN_STATE_LOCK"
         if command -v flock >/dev/null 2>&1; then
-            flock -x 219
+            flock -x 9
         fi
     fi
     AUTO_LEARN_LOCK_DEPTH=$((AUTO_LEARN_LOCK_DEPTH + 1))
