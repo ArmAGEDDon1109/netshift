@@ -9,8 +9,10 @@ Usage:
               restart (keeps SSH/agent connection stable for shell-only changes).
 """
 import base64
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 FILES = [
     # Backend
@@ -70,6 +72,22 @@ pos_args = [a for a in sys.argv[1:] if not a.startswith("-")]
 no_restart = "--no-restart" in args
 ROOT = pos_args[0] if pos_args else "."
 
+def default_pkg_version() -> str:
+    makefile = Path(ROOT) / "netshift" / "Makefile"
+    if makefile.is_file():
+        text = makefile.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r"NETSHIFT_VERSION\),\s*([\d.]+)\)", text)
+        if m:
+            return m.group(1)
+    return "0.9.9"
+
+
+DEPLOY_VERSION = default_pkg_version()
+STAMP_VERSION_CMD = (
+    f"sed -i 's/__COMPILED_VERSION_VARIABLE__/{DEPLOY_VERSION}/g' "
+    "/usr/lib/netshift/constants.sh"
+)
+
 for rel, remote in FILES:
     path = f"{ROOT}/{rel}".replace("\\", "/")
     data = open(path, "rb").read()
@@ -84,6 +102,7 @@ for rel, remote in FILES:
 
 if no_restart:
     post_cmd = (
+        f"{STAMP_VERSION_CMD} && "
         "chmod +x /usr/bin/netshift /etc/init.d/netshift "
         "/opt/zapret/init.d/openwrt/custom.d/90-script.sh "
         "/usr/lib/netshift/zapret/90-script.sh && "
@@ -95,6 +114,7 @@ if no_restart:
     )
 else:
     post_cmd = (
+        f"{STAMP_VERSION_CMD} && "
         "chmod +x /usr/bin/netshift /etc/init.d/netshift "
         "/opt/zapret/init.d/openwrt/custom.d/90-script.sh "
         "/usr/lib/netshift/zapret/90-script.sh && "
