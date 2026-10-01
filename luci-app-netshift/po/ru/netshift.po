@@ -230,6 +230,15 @@ msgstr "Журнал проверок пуст."
 msgid "Probe history: direct access, Zapret, failed checks. These domains are not routed through NetShift."
 msgstr "История probe: прямой доступ, Zapret, неудачные проверки. Эти домены не идут через NetShift."
 
+msgid "Probe history: direct access, Zapret, failed checks. These domains are not routed through NetShift. Remove or Clear log also drops NetShift-added Zapret excludes."
+msgstr "История проверок: прямой доступ, Zapret, неудачные проверки. Эти домены не маршрутизируются через NetShift. Удаление строки или «Очистить журнал» также снимает auto-exclude Zapret, добавленные NetShift."
+
+msgid "Cleared detection log and matching Zapret auto-excludes"
+msgstr "Журнал проверок очищен, совпадающие auto-exclude Zapret удалены"
+
+msgid "Hostnames in zapret-hosts-user-exclude.txt (desync off). Default view: entries added by NetShift auto-learn only (fast). Full list can be large."
+msgstr "Имена в zapret-hosts-user-exclude.txt (desync выкл.). По умолчанию — только записи auto-learn NetShift (быстро). Полный список может быть большим."
+
 msgid "Clear log"
 msgstr "Очистить журнал"
 
