@@ -55,10 +55,19 @@ zapret_netshift_add_exclude() {
 
 zapret_netshift_remove_exclude() {
     local domain="$1"
+    local tmp
 
     [ -n "$domain" ] || return 1
-    [ -f "$TARGET" ] && sed -i "/^${domain}$/d" "$TARGET"
-    [ -f "$NETSHIFT_AUTO" ] && sed -i "/^${domain}$/d" "$NETSHIFT_AUTO"
+    tmp="$(mktemp)"
+    if [ -f "$TARGET" ]; then
+        grep -vxF "$domain" "$TARGET" > "$tmp" 2>/dev/null || true
+        mv "$tmp" "$TARGET"
+    fi
+    tmp="$(mktemp)"
+    if [ -f "$NETSHIFT_AUTO" ]; then
+        grep -vxF "$domain" "$NETSHIFT_AUTO" > "$tmp" 2>/dev/null || true
+        mv "$tmp" "$NETSHIFT_AUTO"
+    fi
 }
 
 zapret_netshift_is_excluded() {

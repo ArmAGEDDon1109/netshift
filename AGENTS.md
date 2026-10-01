@@ -1,12 +1,12 @@
-# NetShift Extended — AI agent context (composition root)
+# NetShift — AI agent context (composition root)
 
 This file is auto-loaded by OpenCode (and mirrored for Claude Code in
 `.claude/CLAUDE.md`). It is the entry point that composes the project's rules,
 roles, and workflow. Read it fully before doing anything in this repository.
 
-## What NetShift Extended is (one paragraph)
+## What NetShift is (one paragraph)
 
-NetShift Extended ([ArmAGEDDon1109/netshift](https://github.com/ArmAGEDDon1109/netshift)) is a
+NetShift ([ArmAGEDDon1109/netshift](https://github.com/ArmAGEDDon1109/netshift)) is a
 fork of upstream NetShift (yandexru45/netshift, originally `itdoginfo/podkop`): a traffic-routing / VPN
 client for **OpenWRT 24.10+** on **sing-box**. It routes selected
 domains/subnets through a tunnel while sending everything else directly, ships

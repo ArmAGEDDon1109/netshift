@@ -1,9 +1,9 @@
 <div align="center">
 
-# NetShift Extended
+# NetShift
 
 <p align="center">
-  <img src="./docs/icon.png" alt="NetShift Extended" width="128" />
+  <img src="./docs/icon.png" alt="NetShift" width="128" />
   <br>
   <br>
   <a href="https://github.com/ArmAGEDDon1109/netshift/actions">
@@ -18,7 +18,7 @@
 
 ---
 
-**NetShift Extended** ([fork](https://github.com/ArmAGEDDon1109/netshift)) — форк [NetShift](https://github.com/yandexru45/netshift) / [podkop](https://github.com/itdoginfo/podkop): маршрутизатор трафика для OpenWrt на базе [sing-box](https://github.com/SagerNet/sing-box). Нужные домены и подсети — в туннель, остальное — напрямую.
+**NetShift** ([fork](https://github.com/ArmAGEDDon1109/netshift)) — форк [upstream NetShift](https://github.com/yandexru45/netshift) / [podkop](https://github.com/itdoginfo/podkop): маршрутизатор трафика для OpenWrt на базе [sing-box](https://github.com/SagerNet/sing-box). Нужные домены и подсети — в туннель, остальное — напрямую.
 
 **Чем отличается от upstream NetShift:**
 
@@ -34,17 +34,17 @@
 
 ## Автоопределение блокировок (auto-learn)
 
-NetShift Extended следит за DNS-запросами **LAN-клиентов** (dnsmasq `logqueries`), для новых доменов запускает **TLS-пробу** (не HTTP 200 — именно handshake: Zapret часто ломает TLS, а TCP ещё «живой») и выбирает исход:
+NetShift следит за DNS-запросами **LAN-клиентов** (dnsmasq `logqueries`), для новых доменов запускает **TLS-пробу** (не HTTP 200 — именно handshake: Zapret часто ломает TLS, а TCP ещё «живой») и выбирает исход:
 
 | Стадия | Что произошло |
 |--------|----------------|
-| `resolved_direct` | TLS ок при **desync выкл** (домен в exclude Zapret) |
-| `resolved_desync` | TLS ок при **desync вкл** — обход DPI достаточен |
-| `resolved_zapret` | Desync ломает TLS, но **exclude восстанавливает** (постоянный exclude, без VPN) |
+| `resolved_direct` | Домен в exclude Zapret (или exclude не нужен) и **TLS с LAN-пути** проходит |
+| `resolved_desync` | TLS ок при **desync вкл** (домен не в exclude) — обход DPI достаточен |
+| `resolved_zapret` | **Desync ломает TLS** (в браузере часто `SSL_ERROR_RX_MALFORMED_SERVER_HELLO`), exclude восстанавливает handshake → домен в **exclude** Zapret |
 | `netshift` | Прямой путь не работает — домен добавлен в ruleset **hot-patch без restart** |
 | `failed` | Недоступен ни напрямую, ни через туннель |
 
-Список и история — LuCI **Services → NetShift Extended → Auto-detection**. CLI: `netshift auto_learn probe <domain>`.
+Список и история — LuCI **Services → NetShift → Auto-detection** (блоки «Detection log» и **«Zapret exclude list»** — всё, что в `zapret-hosts-user-exclude.txt`, с пометкой Auto-learn / вручную). CLI: `netshift auto_learn probe <domain>`, `netshift auto_learn zapret-excludes`.
 
 ### Схема: цикл auto-learn
 
@@ -54,11 +54,13 @@ flowchart TD
     B --> C["Монитор auto-learn\n(netshift __auto_learn_monitor)"]
     C --> D{".ru / .lan / Yandex /\nлокальные имена?"}
     D -->|да| SKIP["Пропуск"]
-    D -->|нет| E["① TLS: Zapret exclude\n(desync OFF)"]
-    E -->|OK| R1["resolved_direct\nexclude сохраняется"]
-    E -->|fail| F["② TLS: desync ON\n(домен не в exclude)"]
+    D -->|нет| LAN["TLS-проба: veth netns\n(FORWARD как у ПК)"]
+    LAN --> EX{уже в exclude\nZapret?}
+    EX -->|да| E["TLS с exclude"]
+    E -->|OK| R1["resolved_direct"]
+    EX -->|нет| F["① TLS: desync ON\n(тот же LAN-путь)"]
     F -->|OK| R2["resolved_desync"]
-    F -->|fail| G["③ TLS: exclude снова\n(desync ломал TLS)"]
+    F -->|fail| G["② TLS: добавить exclude\n(desync OFF)"]
     G -->|OK| R3["resolved_zapret\nпостоянный exclude"]
     G -->|fail| H["④ TLS через NetShift\n(service proxy)"]
     H -->|OK| R4["hot-patch ruleset\n→ netshift"]
@@ -112,11 +114,51 @@ flowchart LR
 
 Тот же exclude-лист использует auto-learn на шагах ① и ③; отличие в том, что auto-learn **сам** находит домен по DNS, проверяет TLS и решает: оставить exclude, полагаться на desync или отправить в NetShift.
 
+### TLS-проба с LAN (только на роутере)
+
+Обычный `curl` **на самом роутере** часто идёт не тем же путём, что браузер на ПК (nfqws/Zapret цепляется к **FORWARD** LAN→WAN). Поэтому auto-learn поднимает **синтетического LAN-клиента** на роутере:
+
+| Компонент | Назначение |
+|-----------|------------|
+| `kmod-veth` | Модуль ядра для пары veth (обязательная зависимость пакета `netshift`) |
+| `nsp-lan` | Конец veth, подключён к `br-lan` |
+| `netshift-probe` | Network namespace с адресом «как у ПК» |
+| DNS `192.168.1.1` | Тот же dnsmasq, что видят LAN-клиенты |
+| `curl` из namespace | Трафик уходит в **FORWARD**, как с компьютера в сети |
+
+**Зависимости пакета** (OpenWrt `opkg` / `apk` при `install.sh` или установке `.ipk`/`.apk`):
+
+- `kmod-veth` — **подтягивается автоматически** вместе с `netshift` (`DEPENDS` в Makefile).
+- Если ставили вручную без зависимостей: `opkg install kmod-veth` или `apk add kmod-veth`.
+
+**Настройка IP «клиента»** (должен быть свободен и **вне пула DHCP**):
+
+```uci
+config auto_learn 'auto_learn'
+	option enabled '1'
+	option probe_lan_ip '192.168.1.242'
+```
+
+В LuCI: **Auto-detection → LAN probe client IP** (по умолчанию `192.168.1.242`).
+
+Проверка вручную:
+
+```sh
+netshift auto_learn probe example.com
+logread -e netshift | tail -20
+```
+
+При старте монитора создаётся veth; при остановке NetShift — удаляется. В `fw4` добавляется правило `forward_lan` для `nsp-lan` (комментарий `netshift-probe`).
+
+Домены из **пользовательских списков секции** NetShift дополнительно проверяются через **mixed inbound** sing-box (путь в туннель).
+
 <details>
 <summary><b>Ограничения auto-learn</b></summary>
 
 - Видны только DNS-запросы **LAN-клиентов** через dnsmasq; DNS самого роутера (например ACME на роутере) не мониторится — используйте `netshift auto_learn probe <domain>`.
 - Пробуется **точное имя** из DNS, не родительский домен (`acme-v02.api.letsencrypt.org`, не `letsencrypt.org`).
+- TLS-проба для Zapret идёт через **синтетического LAN-клиента на роутере** (veth в `br-lan` + network namespace, пакетный путь FORWARD как у ПК). Нужен пакет `kmod-veth` (зависимость `netshift`). IP задаётся `auto_learn.probe_lan_ip` (по умолчанию `192.168.1.242`, вне пула DHCP). Домены из списков секции NetShift дополнительно проверяются через mixed inbound sing-box.
+- **Zapret / desync и TLS:** nfqws может портить ServerHello (Firefox: `SSL_ERROR_RX_MALFORMED_SERVER_HELLO`). Auto-learn сравнивает handshake **с desync** и **с exclude** на клиентском пути; `resolved_zapret` только если exclude реально восстанавливает TLS. Если домен в списке NetShift, а TLS через туннель всё равно падает → `failed` / `tunnel_tls_fail` (исключение Zapret браузер не починит — смотрите outbound/CDN).
 - Игнорируются: `*.ru`, Yandex (`*.yandex.*`, `ya.ru`), `*.lan`, `*.local`, `*.home.arpa`, неполные hostname.
 
 </details>
@@ -142,7 +184,7 @@ flowchart LR
 
 <div align="center">
 
-<img src="docs/screenshot.png" alt="NetShift Extended в LuCI" width="800" />
+<img src="docs/screenshot.png" alt="NetShift в LuCI" width="800" />
 
 </div>
 
@@ -155,7 +197,8 @@ flowchart LR
 
 - OpenWrt **24.10** или выше (поддерживаются и сборки на `opkg`/`.ipk`, и новые на `apk`/`.apk` - OpenWrt 25.12+).
 - Минимум **25 МБ** свободного места. Устройства с флеш-памятью 16 МБ не поддерживаются.
-- На устройстве: `sing-box >= 1.12.0`, `jq >= 1.7.1`, `coreutils-base64 >= 9.7` (ставятся как зависимости пакета).
+- На устройстве: `sing-box >= 1.12.0`, `jq >= 1.7.1`, `coreutils-base64 >= 9.7`, `kmod-nft-tproxy`, **`kmod-veth`** (TLS-пробы auto-learn с LAN-пути), `curl`, `bind-dig` — зависимости пакета **`netshift`** (`opkg`/`apk` ставят их вместе с пакетом).
+- Без `kmod-veth` auto-learn использует запасной путь (dnsmasq + `curl` на роутере); для Zapret это менее точно — см. [TLS-проба с LAN](#tls-проба-с-lan-только-на-роутере).
 
 </details>
 
@@ -211,7 +254,9 @@ wget -O /etc/config/netshift https://raw.githubusercontent.com/ArmAGEDDon1109/ne
 sh <(wget -O - https://raw.githubusercontent.com/ArmAGEDDon1109/netshift/refs/heads/main/install.sh)
 ```
 
-Интерфейс появится в LuCI: **Services → NetShift Extended**.
+Интерфейс появится в LuCI: **Services → NetShift**.
+
+`install.sh` после установки пакетов проверяет **`kmod-veth`** (если `.ipk` ставили без зависимостей — доустановит из фида OpenWrt).
 
 <details>
 <summary><b>Готовые community-списки</b></summary>

@@ -152,8 +152,8 @@ msgstr "Менеджер компонентов"
 msgid "Config File Path"
 msgstr "Путь к файлу конфигурации"
 
-msgid "Configuration for NetShift Extended service"
-msgstr "Конфигурация службы NetShift Extended"
+msgid "Configuration for NetShift service"
+msgstr "Конфигурация службы NetShift"
 
 msgid "Configuration Type"
 msgstr "Тип конфигурации"
@@ -662,11 +662,8 @@ msgstr "Должно быть числом от 50 до 1000"
 msgid "NetShift"
 msgstr "NetShift"
 
-msgid "NetShift Extended"
-msgstr "NetShift Extended"
-
-msgid "NetShift Extended Settings"
-msgstr "Настройки NetShift Extended"
+msgid "NetShift Settings"
+msgstr "Настройки NetShift"
 
 msgid "NetShift updated, version:"
 msgstr "NetShift обновлён, версия:"

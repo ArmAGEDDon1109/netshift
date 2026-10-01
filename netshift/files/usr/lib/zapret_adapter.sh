@@ -106,6 +106,13 @@ zapret_adapter_add_exclude() {
     sh "$script" add-exclude-quiet "$domain"
 }
 
+zapret_adapter_is_netshift_auto_excluded() {
+    local domain="$1"
+
+    [ -n "$domain" ] && [ -f "$ZAPRET_NETSHIFT_AUTO_EXCLUDE_FILE" ] \
+        && grep -qxF "$domain" "$ZAPRET_NETSHIFT_AUTO_EXCLUDE_FILE" 2>/dev/null
+}
+
 zapret_adapter_remove_exclude() {
     local domain="$1"
     local script
@@ -120,6 +127,19 @@ zapret_adapter_apply_now() {
         "$ZAPRET_INIT_SCRIPT" reload > /dev/null 2>&1
         log "Zapret reloaded (immediate)" "debug"
     fi
+}
+
+zapret_adapter_apply_hostlist() {
+    local pid
+
+    pid="$(pidof nfqws 2>/dev/null)"
+    if [ -n "$pid" ]; then
+        for pid in $pid; do
+            kill -HUP "$pid" 2>/dev/null || true
+        done
+        return 0
+    fi
+    zapret_adapter_apply_now
 }
 
 zapret_adapter_apply_debounced() {
@@ -144,6 +164,134 @@ zapret_adapter_apply_debounced() {
         "$ZAPRET_INIT_SCRIPT" reload > /dev/null 2>&1
         log "Zapret reloaded (debounced)" "info"
     fi
+}
+
+zapret_adapter_count_valid_exclude_lines() {
+    local file="$1"
+
+    [ -f "$file" ] || {
+        echo 0
+        return 0
+    }
+    grep -v '^#' "$file" 2>/dev/null | grep -v '^[[:space:]]*$' | grep -v '[[:space:]]' | wc -l | tr -d ' '
+}
+
+zapret_adapter_exclude_counts_json() {
+    local user_file="$ZAPRET_EXCLUDE_HOSTLIST"
+    local auto_file="$ZAPRET_NETSHIFT_AUTO_EXCLUDE_FILE"
+    local total netshift_auto
+
+    total="$(zapret_adapter_count_valid_exclude_lines "$user_file")"
+    netshift_auto="$(zapret_adapter_count_valid_exclude_lines "$auto_file")"
+
+    jq -n \
+        --argjson total "$total" \
+        --argjson netshift_auto "$netshift_auto" \
+        '{total: $total, netshift_auto: $netshift_auto, manual: ($total - $netshift_auto)}'
+}
+
+# filter: netshift_auto (default) | manual | all
+# limit/offset only for manual|all (default limit 150)
+zapret_adapter_list_excludes_json() {
+    local filter="${1:-netshift_auto}"
+    local limit="${2:-150}"
+    local offset="${3:-0}"
+    local user_file="$ZAPRET_EXCLUDE_HOSTLIST"
+    local auto_file="$ZAPRET_NETSHIFT_AUTO_EXCLUDE_FILE"
+    local user_raw auto_raw counts
+
+    case "$filter" in
+    netshift_auto|manual|all) ;;
+    *) filter="netshift_auto" ;;
+    esac
+
+    if [ -z "$limit" ]; then
+        limit=200
+    fi
+    case "$limit" in
+    *[!0-9]*) limit=200 ;;
+    esac
+    if [ -z "$offset" ]; then
+        offset=0
+    fi
+    case "$offset" in
+    *[!0-9]*) offset=0 ;;
+    esac
+
+    counts="$(zapret_adapter_exclude_counts_json)"
+
+    if [ ! -f "$user_file" ]; then
+        echo "$counts" | jq \
+            --arg f "$filter" \
+            --argjson l "$limit" \
+            --argjson o "$offset" \
+            '. + {filter: $f, limit: $l, offset: $o, count: 0, excludes: []}'
+        return 0
+    fi
+
+    user_raw="$(cat "$user_file" 2>/dev/null)" || user_raw=""
+    auto_raw=""
+    if [ -f "$auto_file" ]; then
+        auto_raw="$(cat "$auto_file" 2>/dev/null)" || auto_raw=""
+    fi
+
+    auto_learn_init_state_file
+
+    echo "$counts" | jq \
+        --arg user "$user_raw" \
+        --arg auto "$auto_raw" \
+        --arg filter "$filter" \
+        --argjson limit "$limit" \
+        --argjson offset "$offset" \
+        --slurpfile state "$AUTO_LEARN_STATE_FILE" \
+        '
+        def lines($raw):
+            $raw
+            | split("\n")
+            | map(select(. != "" and .[0:1] != "#" and index(" ") == null));
+        def state_by_name:
+            reduce (($state[0].domains // [])[]) as $d ({}; .[$d.name] = $d);
+        def enrich($name; $source):
+            (state_by_name | .[$name]) as $st |
+            {
+                name: $name,
+                source: $source,
+                stage: (if $st == null then null else $st.stage end),
+                reason: (if $st == null then null else $st.reason end),
+                updated_at: (if $st == null then null else $st.updated_at end)
+            };
+        (lines($auto) | unique) as $auto_set |
+        (lines($user) | unique | sort) as $user_set |
+        (if $filter == "netshift_auto" then
+            $auto_set
+        elif $filter == "manual" then
+            [$user_set[] | select(($auto_set | index(.)) == null)]
+        else
+            $user_set
+        end) as $picked |
+        {
+            total: .total,
+            netshift_auto: .netshift_auto,
+            manual: .manual,
+            filter: $filter,
+            limit: $limit,
+            offset: $offset,
+            count: ($picked | length),
+            excludes: (
+                $picked
+                | map(
+                    . as $name |
+                    enrich(
+                        $name;
+                        if ($auto_set | index($name)) != null then "netshift_auto" else "manual" end
+                    )
+                )
+                | sort_by(.updated_at // 0)
+                | reverse
+                | .[$offset:($offset + $limit)]
+            )
+        }
+        '
 }
 
 zapret_adapter_status_json() {

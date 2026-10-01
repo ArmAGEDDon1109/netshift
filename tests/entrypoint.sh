@@ -7480,10 +7480,11 @@ test_auto_learn() {
     header "Auto-learn state + Zapret adapter"
 
     local auto_learn="${NETSHIFT_LIB_DIR}/auto_learn.sh"
+    local lan_path="${NETSHIFT_LIB_DIR}/auto_learn_lan_path.sh"
     local zapret_adapter="${NETSHIFT_LIB_DIR}/zapret_adapter.sh"
     local const="${NETSHIFT_LIB_DIR}/constants.sh"
-    if [ ! -r "$auto_learn" ] || [ ! -r "$zapret_adapter" ] || [ ! -r "$const" ]; then
-        fail "auto_learn / zapret_adapter / constants.sh not found"
+    if [ ! -r "$auto_learn" ] || [ ! -r "$lan_path" ] || [ ! -r "$zapret_adapter" ] || [ ! -r "$const" ]; then
+        fail "auto_learn / lan_path / zapret_adapter / constants.sh not found"
         return
     fi
 
@@ -7498,10 +7499,17 @@ test_auto_learn() {
 . "HELPERS_LIB"
 . "RULESETS_LIB"
 . "ZAPRET_LIB"
+. "LAN_PATH_LIB"
 . "AUTO_LEARN_LIB"
+
+auto_learn_lan_path_available() { return 1; }
+auto_learn_probe_tls_lan_forward() { return 1; }
+auto_learn_lan_path_teardown() { :; }
 
 NETSHIFT_STATE_DIR="__NS_WORK__/state"
 AUTO_LEARN_STATE_FILE="$NETSHIFT_STATE_DIR/auto_learned.json"
+AUTO_LEARN_STATE_LOCK="$NETSHIFT_STATE_DIR/auto_learn.lock"
+AUTO_LEARN_DNS_REPEAT_COOLDOWN_SEC="60"
 TMP_RULESET_FOLDER="__NS_WORK__/tmp/rulesets"
 ZAPRET_INIT_SCRIPT="__NS_WORK__/zapret_init.sh"
 ZAPRET_90_SCRIPT="__NS_WORK__/zapret/custom.d/90-script.sh"
@@ -7518,8 +7526,12 @@ AUTO_LEARN_DEFAULT_PROBE_DELAY="30"
 AUTO_LEARN_DEFAULT_ZAPRET_PROBE_DELAY="30"
 AUTO_LEARN_PROBE_COOLDOWN_SEC="300"
 AUTO_LEARN_DNS_LOG_TS_FILE="__NS_WORK__/state/auto_learn_dns_ts"
+AUTO_LEARN_DNS_LOG_LAST_ID_FILE="__NS_WORK__/state/auto_learn_dns_log_id"
+AUTO_LEARN_DEFAULT_MONITOR_INTERVAL="30"
+AUTO_LEARN_DEFAULT_MAX_PROBES_PER_TICK="2"
+AUTO_LEARN_DNS_LOG_LINES="50"
 AUTO_LEARN_ZAPRET_APPLY_WAIT_SEC="0"
-AUTO_LEARN_SKIP_DOMAIN_SUFFIXES="ru lan local localdomain home internal private invalid test localhost home.arpa intranet corp"
+AUTO_LEARN_SKIP_DOMAIN_SUFFIXES="ru lan local localdomain home internal private invalid test localhost home.arpa intranet corp ntp.org pool.ntp.org"
 
 log() { :; }
 zapret_adapter_apply_now() { :; }
@@ -7533,6 +7545,7 @@ config_get() {
                 target_section) eval "$1=\"\${AL_TARGET:-main}\"" ;;
                 max_domains) eval "$1=\"\${AL_MAX:-500}\"" ;;
                 zapret_probe_delay) eval "$1=\"\${AL_ZAPRET_DELAY:-30}\"" ;;
+                probe_lan_ip) eval "$1=\"\${AL_PROBE_LAN_IP:-}\"" ;;
                 *) eval "$1=\"\${4:-}\"" ;;
             esac
             ;;
@@ -7632,8 +7645,49 @@ line='Sun Sep 28 01:00:00 2026 daemon.info dnsmasq[1]: query[A] blocked.site fro
 parsed="$(auto_learn_parse_dnsmasq_query_line "$line")"
 [ "$parsed" = "blocked.site" ] && echo 'autolearn-dns-parse:OK' || echo "autolearn-dns-parse:FAIL ($parsed)"
 
+line='Sun Sep 28 01:00:00 2026 daemon.info dnsmasq[1]: 21878 192.168.1.50/41923 query[HTTPS] app.example.com from 192.168.1.50'
+parsed="$(auto_learn_parse_dnsmasq_query_line "$line")"
+[ "$parsed" = "app.example.com" ] && echo 'autolearn-dns-parse-https:OK' || echo "autolearn-dns-parse-https:FAIL ($parsed)"
+line='Sun Sep 28 01:00:00 2026 daemon.info dnsmasq[1]: 21878 192.168.1.50/41923 forwarded cdn.example.com to 127.0.0.42'
+parsed="$(auto_learn_parse_dnsmasq_query_line "$line")"
+[ "$parsed" = "cdn.example.com" ] && echo 'autolearn-dns-parse-forwarded:OK' || echo "autolearn-dns-parse-forwarded:FAIL ($parsed)"
+auto_learn_validate_domain "app.203.0.113.10.nip.io" \
+    && echo 'autolearn-validate-nip:OK' || echo 'autolearn-validate-nip:FAIL'
+auto_learn_should_skip_candidate "0.pool.ntp.org" \
+    && echo 'autolearn-skip-ntp:OK' || echo 'autolearn-skip-ntp:FAIL'
+
+mkdir -p "$(dirname "$AUTO_LEARN_DNS_LOG_TS_FILE")"
+printf '%s\n' 0 > "$AUTO_LEARN_DNS_LOG_TS_FILE"
+printf '%s\n' 0 > "$AUTO_LEARN_DNS_LOG_LAST_ID_FILE"
+ubus_fixture="__NS_WORK__/ubus-log-fixture.json"
+jq -n --argjson id 99 --argjson time 1700000000000 --arg msg 'dnsmasq[1]: query[A] ubus-hook.example from 192.168.1.10' \
+    '[{id: $id, time: $time, msg: $msg}]' > "$ubus_fixture"
+candidates="$(auto_learn_collect_dns_from_ubus_json "$ubus_fixture")"
+echo "$candidates" | grep -qxF 'ubus-hook.example' \
+    && echo 'autolearn-dns-ubus-collect:OK' || echo "autolearn-dns-ubus-collect:FAIL ($candidates)"
+[ "$(cat "$AUTO_LEARN_DNS_LOG_LAST_ID_FILE" 2>/dev/null)" = "99" ] \
+    && echo 'autolearn-dns-ubus-watermark:OK' || echo 'autolearn-dns-ubus-watermark:FAIL'
+
 auto_learn_domain_ready_for_probe "fresh.example" && echo 'autolearn-ready-new:OK' || echo 'autolearn-ready-new:FAIL'
 auto_learn_domain_ready_for_probe "example.com" && echo 'autolearn-ready-netshift:FAIL' || echo 'autolearn-ready-netshift:OK'
+
+auto_learn_upsert_domain "repeat-dns.example" "resolved_direct" "probe_ok"
+now_ts="$(date +%s)"
+old_ts="$((now_ts - 120))"
+jq --arg d "repeat-dns.example" --argjson ts "$old_ts" \
+    '(.domains[] | select(.name == $d) | .updated_at) = $ts' \
+    "$AUTO_LEARN_STATE_FILE" > "$AUTO_LEARN_STATE_FILE.$$" \
+    && mv "$AUTO_LEARN_STATE_FILE.$$" "$AUTO_LEARN_STATE_FILE"
+auto_learn_domain_dns_redetect_due "repeat-dns.example" \
+    && echo 'autolearn-dns-redetect-due:OK' || echo 'autolearn-dns-redetect-due:FAIL'
+auto_learn_domain_should_enqueue_from_dns "repeat-dns.example" \
+    && echo 'autolearn-dns-redetect-enqueue:OK' || echo 'autolearn-dns-redetect-enqueue:FAIL'
+jq --arg d "repeat-dns.example" --argjson ts "$now_ts" \
+    '(.domains[] | select(.name == $d) | .updated_at) = $ts' \
+    "$AUTO_LEARN_STATE_FILE" > "$AUTO_LEARN_STATE_FILE.$$" \
+    && mv "$AUTO_LEARN_STATE_FILE.$$" "$AUTO_LEARN_STATE_FILE"
+auto_learn_domain_dns_redetect_due "repeat-dns.example" \
+    && echo 'autolearn-dns-redetect-cooldown:FAIL' || echo 'autolearn-dns-redetect-cooldown:OK'
 
 AL_USER_LIST_TYPE=text
 AL_USER_DOMAINS_TEXT='api2.cursor.sh,cursor.sh'
@@ -7676,6 +7730,7 @@ auto_learn_curl_tls_handshake_ok "0" && echo 'autolearn-tls-rc-0:OK' || echo 'au
 auto_learn_curl_tls_handshake_ok "22" && echo 'autolearn-tls-rc-22:OK' || echo 'autolearn-tls-rc-22:FAIL'
 auto_learn_curl_tls_handshake_ok "52" && echo 'autolearn-tls-rc-52:OK' || echo 'autolearn-tls-rc-52:FAIL'
 auto_learn_curl_tls_handshake_ok "35" && echo 'autolearn-tls-rc-35-fail:FAIL' || echo 'autolearn-tls-rc-35-fail:OK'
+auto_learn_lan_path_available && echo 'autolearn-lan-path-mock:FAIL' || echo 'autolearn-lan-path-mock:OK'
 auto_learn_should_skip_candidate "1.2.3.4.in-addr.arpa" && echo 'autolearn-skip-arpa:OK' || echo 'autolearn-skip-arpa:FAIL'
 auto_learn_validate_domain "1.2.3.4.in-addr.arpa" && echo 'autolearn-reject-arpa:FAIL' || echo 'autolearn-reject-arpa:OK'
 auto_learn_should_skip_candidate "api.example.ru" && echo 'autolearn-skip-ru:OK' || echo 'autolearn-skip-ru:FAIL'
@@ -7695,6 +7750,7 @@ ALEOF
     sed -i "s|HELPERS_LIB|$NETSHIFT_LIB_DIR/helpers.sh|g" "$drv"
     sed -i "s|RULESETS_LIB|$NETSHIFT_LIB_DIR/rulesets.sh|g" "$drv"
     sed -i "s|ZAPRET_LIB|$zapret_adapter|g" "$drv"
+    sed -i "s|LAN_PATH_LIB|$lan_path|g" "$drv"
     sed -i "s|AUTO_LEARN_LIB|$auto_learn|g" "$drv"
 
     local out
@@ -7720,6 +7776,7 @@ ALEOF
     echo "$out" | grep -q 'autolearn-tls-rc-0:OK' && pass "auto-learn TLS curl rc 0" || fail "auto-learn TLS curl rc 0" "$out"
     echo "$out" | grep -q 'autolearn-tls-rc-52:OK' && pass "auto-learn TLS curl rc 52" || fail "auto-learn TLS curl rc 52" "$out"
     echo "$out" | grep -q 'autolearn-tls-rc-35-fail:OK' && pass "auto-learn TLS curl rc 35 rejected" || fail "auto-learn TLS curl rc 35 rejected" "$out"
+    echo "$out" | grep -q 'autolearn-lan-path-mock:OK' && pass "auto-learn LAN path stub" || fail "auto-learn LAN path stub" "$out"
     echo "$out" | grep -q 'autolearn-skip-arpa:OK' && pass "auto-learn skip in-addr.arpa" || fail "auto-learn skip in-addr.arpa" "$out"
     echo "$out" | grep -q 'autolearn-reject-arpa:OK' && pass "auto-learn reject in-addr.arpa" || fail "auto-learn reject in-addr.arpa" "$out"
     echo "$out" | grep -q 'autolearn-skip-ru:OK' && pass "auto-learn skip .ru" || fail "auto-learn skip .ru" "$out"

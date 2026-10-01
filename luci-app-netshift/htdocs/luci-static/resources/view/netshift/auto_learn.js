@@ -34,67 +34,149 @@ function fetchAutoLearnJson(args) {
     });
 }
 
+function formatZapretExcludeSource(source) {
+  if (source === "netshift_auto") {
+    return _("Auto-learn");
+  }
+  if (source === "manual") {
+    return _("Manual / other");
+  }
+  return source || "";
+}
+
+function parseUpdatedAt(value) {
+  if (typeof value === "number" && isFinite(value)) {
+    return value;
+  }
+  const n = parseInt(value, 10);
+  return isFinite(n) ? n : 0;
+}
+
+function sortByUpdatedDesc(entries) {
+  return (entries || []).slice().sort(function (a, b) {
+    const ta = parseUpdatedAt(a && a.updated_at);
+    const tb = parseUpdatedAt(b && b.updated_at);
+    if (tb !== ta) {
+      return tb - ta;
+    }
+    return String((a && a.name) || "").localeCompare(String((b && b.name) || ""));
+  });
+}
+
+function formatUpdatedAt(value) {
+  const ts = parseUpdatedAt(value);
+  return ts ? new Date(ts * 1000).toLocaleString() : "—";
+}
+
+function updatedSortCell(value) {
+  const ts = parseUpdatedAt(value);
+  return E("span", { "data-value": String(ts) }, formatUpdatedAt(value));
+}
+
+function removeButton(name, onRemove) {
+  return E(
+    "button",
+    {
+      class: "cbi-button cbi-button-remove",
+      click: function (ev) {
+        ev.preventDefault();
+        if (onRemove) {
+          onRemove(name);
+        }
+      },
+    },
+    _("Remove"),
+  );
+}
+
+function renderSortedTable(id, captions, sortable, rows, emptyMessage) {
+  const Table = ui.Table || ui.table;
+  if (typeof Table !== "function") {
+    return E("p", { class: "cbi-value-description" }, emptyMessage);
+  }
+
+  const table = new Table(captions, {
+    id: id,
+    sortable: sortable,
+    placeholder: emptyMessage,
+  });
+  table.sortState = [0, true];
+  table.update(rows, emptyMessage);
+  const node = table.render();
+  node.setAttribute("style", "width:100%; margin-top:0.5em;");
+  return node;
+}
+
+function renderZapretExcludeTable(entries, options) {
+  const opts = options || {};
+  const emptyMessage =
+    opts.emptyMessage || _("No domains in Zapret exclude list.");
+  const sorted = sortByUpdatedDesc(entries);
+
+  if (!sorted.length) {
+    return E("p", { class: "cbi-value-description" }, emptyMessage);
+  }
+
+  return renderSortedTable(
+    "ns-auto-learn-zapret",
+    [
+      _("Updated"),
+      _("Domain"),
+      _("Source"),
+      _("Stage"),
+      _("Reason"),
+      _("Actions"),
+    ],
+    ["numeric", true, true, true, true, false],
+    sorted.map(function (entry) {
+      const name = entry.name || "";
+      return [
+        updatedSortCell(entry.updated_at),
+        name,
+        formatZapretExcludeSource(entry.source),
+        entry.stage || "—",
+        entry.reason || "—",
+        removeButton(name, opts.onRemove),
+      ];
+    }),
+    emptyMessage,
+  );
+}
+
 function renderDomainTable(domains, options) {
   const opts = options || {};
   const showStage = opts.showStage !== false;
   const emptyMessage =
     opts.emptyMessage || _("No auto-detected domains yet.");
+  const sorted = sortByUpdatedDesc(domains);
 
-  if (!domains || !domains.length) {
+  if (!sorted.length) {
     return E("p", { class: "cbi-value-description" }, emptyMessage);
   }
 
-  const rows = domains.map(function (entry) {
-    const name = entry.name || "";
-    const stage = entry.stage || "";
-    const reason = entry.reason || "";
-    const updated = entry.updated_at
-      ? new Date(entry.updated_at * 1000).toLocaleString()
-      : "";
-
-    const cells = [E("td", { class: "td" }, name)];
-    if (showStage) {
-      cells.push(E("td", { class: "td" }, stage));
-    }
-    cells.push(
-      E("td", { class: "td" }, reason),
-      E("td", { class: "td" }, updated),
-      E(
-        "td",
-        { class: "td right" },
-        E(
-          "button",
-          {
-            class: "cbi-button cbi-button-remove",
-            click: function (ev) {
-              ev.preventDefault();
-              if (opts.onRemove) {
-                opts.onRemove(name);
-              }
-            },
-          },
-          _("Remove"),
-        ),
-      ),
-    );
-
-    return E("tr", { class: "tr" }, cells);
-  });
-
-  const headers = [E("th", { class: "th" }, _("Domain"))];
+  const captions = [_("Updated"), _("Domain")];
+  const sortable = ["numeric", true];
   if (showStage) {
-    headers.push(E("th", { class: "th" }, _("Stage")));
+    captions.push(_("Stage"));
+    sortable.push(true);
   }
-  headers.push(
-    E("th", { class: "th" }, _("Reason")),
-    E("th", { class: "th" }, _("Updated")),
-    E("th", { class: "th" }, _("Actions")),
-  );
+  captions.push(_("Reason"), _("Actions"));
+  sortable.push(true, false);
 
-  return E(
-    "table",
-    { class: "table", style: "width:100%; margin-top:0.5em;" },
-    [E("tr", { class: "tr table-titles" }, headers)].concat(rows),
+  return renderSortedTable(
+    showStage ? "ns-auto-learn-log" : "ns-auto-learn-routed",
+    captions,
+    sortable,
+    sorted.map(function (entry) {
+      const name = entry.name || "";
+      const row = [updatedSortCell(entry.updated_at), name];
+      if (showStage) {
+        row.push(entry.stage || "");
+      }
+      row.push(entry.reason || "", removeButton(name, opts.onRemove));
+      return row;
+    }),
+    emptyMessage,
   );
 }
 
@@ -120,6 +202,8 @@ function refreshAutoLearnFrame(frame) {
   const routedHost = frame.querySelector(".ns-auto-learn-domains__table");
   const logHost = frame.querySelector(".ns-auto-learn-domains__log");
   const logSummary = frame.querySelector(".ns-auto-learn-log__summary");
+  const zapretHost = frame.querySelector(".ns-auto-learn-domains__zapret");
+  const zapretSummary = frame.querySelector(".ns-auto-learn-zapret__summary");
 
   if (routedHost) {
     routedHost.innerHTML = "";
@@ -133,10 +217,9 @@ function refreshAutoLearnFrame(frame) {
       E("p", { class: "cbi-value-description" }, _("Loading…")),
     );
   }
-
   return fetchAutoLearnJson(["list"])
     .then(function (data) {
-      const all = (data && data.domains) || [];
+      const all = sortByUpdatedDesc((data && data.domains) || []);
       const routed = all.filter(function (entry) {
         return entry.stage === "netshift";
       });
@@ -147,6 +230,7 @@ function refreshAutoLearnFrame(frame) {
       if (logSummary) {
         logSummary.textContent = _("Detection log (%d)").format(log.length);
       }
+      refreshZapretExcludeSummary(frame);
 
       if (routedHost) {
         routedHost.innerHTML = "";
@@ -172,6 +256,11 @@ function refreshAutoLearnFrame(frame) {
             },
           }),
         );
+      }
+
+      const zapretDetails = frame.querySelector(".ns-auto-learn-zapret");
+      if (zapretDetails && zapretDetails.open) {
+        loadZapretExcludeTable(frame);
       }
     })
     .catch(function (err) {
@@ -202,6 +291,90 @@ function refreshAutoLearnFrame(frame) {
           ),
         );
       }
+      if (zapretHost) {
+        zapretHost.innerHTML = "";
+        zapretHost.appendChild(
+          E(
+            "p",
+            {
+              class: "cbi-value-description",
+              style: "color: var(--error-color-medium, #c00);",
+            },
+            message,
+          ),
+        );
+      }
+    });
+}
+
+function refreshZapretExcludeSummary(frame) {
+  const zapretSummary = frame.querySelector(".ns-auto-learn-zapret__summary");
+  if (!zapretSummary) {
+    return Promise.resolve();
+  }
+
+  return fetchAutoLearnJson(["zapret-excludes-count"])
+    .then(function (counts) {
+      const total = counts && counts.total ? counts.total : 0;
+      const ns = counts && counts.netshift_auto ? counts.netshift_auto : 0;
+      zapretSummary.textContent = _(
+        "Zapret exclude (NetShift %d · total %d)",
+      ).format(ns, total);
+    })
+    .catch(function () {
+      zapretSummary.textContent = _("Zapret exclude list");
+    });
+}
+
+function loadZapretExcludeTable(frame) {
+  const zapretHost = frame.querySelector(".ns-auto-learn-domains__zapret");
+  const filterSel = frame.querySelector('[data-zapret-filter="1"]');
+  const filter = (filterSel && filterSel.value) || "netshift_auto";
+
+  if (!zapretHost) {
+    return Promise.resolve();
+  }
+
+  zapretHost.innerHTML = "";
+  zapretHost.appendChild(
+    E("p", { class: "cbi-value-description" }, _("Loading…")),
+  );
+
+  return fetchAutoLearnJson(["zapret-excludes", filter, "200", "0"])
+    .then(function (data) {
+      const rows = sortByUpdatedDesc((data && data.excludes) || []);
+      zapretHost.innerHTML = "";
+      if (data && data.filter === "all" && data.count > data.limit) {
+        zapretHost.appendChild(
+          E(
+            "p",
+            { class: "cbi-value-description" },
+            _("Showing %d of %d entries.").format(rows.length, data.count),
+          ),
+        );
+      }
+      zapretHost.appendChild(
+        renderZapretExcludeTable(rows, {
+          emptyMessage: _("No domains in this Zapret exclude view."),
+          onRemove: function (domain) {
+            removeDomainAndRefresh(domain, frame);
+          },
+        }),
+      );
+      refreshZapretExcludeSummary(frame);
+    })
+    .catch(function (err) {
+      zapretHost.innerHTML = "";
+      zapretHost.appendChild(
+        E(
+          "p",
+          {
+            class: "cbi-value-description",
+            style: "color: var(--error-color-medium, #c00);",
+          },
+          String(err),
+        ),
+      );
     });
 }
 
@@ -296,12 +469,30 @@ function initDomainListMounts() {
       });
     }
 
+    const zapretDetails = frame.querySelector(".ns-auto-learn-zapret");
+    if (zapretDetails) {
+      zapretDetails.addEventListener("toggle", function () {
+        if (zapretDetails.open) {
+          loadZapretExcludeTable(frame);
+        }
+      });
+    }
+
+    const zapretFilter = frame.querySelector('[data-zapret-filter="1"]');
+    if (zapretFilter) {
+      zapretFilter.addEventListener("change", function () {
+        if (zapretDetails && zapretDetails.open) {
+          loadZapretExcludeTable(frame);
+        }
+      });
+    }
+
     if (clearLogBtn) {
       clearLogBtn.addEventListener("click", function (ev) {
         ev.preventDefault();
         fetchAutoLearnJson(["clear-log"])
           .then(function () {
-            ui.addNotification(null, E("p", {}, _("Cleared detection log")));
+            ui.addNotification(null, E("p", {}, _("Cleared detection log and matching Zapret auto-excludes")));
             return refreshAutoLearnFrame(frame);
           })
           .catch(function (err) {
@@ -422,6 +613,42 @@ function createAutoLearnContent(section) {
   o.depends("enabled", "1");
   o.depends("zapret_enabled", "1");
 
+  o = section.option(
+    form.Value,
+    "monitor_interval",
+    _("Monitor interval (sec)"),
+    _(
+      "How often the background monitor reads DNS logs. 30s or more is easier on CPU and flash for 24/7 use.",
+    ),
+  );
+  o.default = "30";
+  o.datatype = "uinteger";
+  o.depends("enabled", "1");
+
+  o = section.option(
+    form.Value,
+    "max_probes_per_tick",
+    _("Max TLS probes per tick"),
+    _(
+      "Cap concurrent domain probes per monitor cycle (1–8). Lower values reduce load when auto-learn runs 24/7.",
+    ),
+  );
+  o.default = "2";
+  o.datatype = "uinteger";
+  o.depends("enabled", "1");
+
+  o = section.option(
+    form.Value,
+    "probe_lan_ip",
+    _("LAN probe client IP"),
+    _(
+      "Synthetic LAN client for TLS probes (veth + network namespace on the router). Must be a free address in the LAN subnet, outside the DHCP pool (default 192.168.1.242). Requires kmod-veth.",
+    ),
+  );
+  o.placeholder = "192.168.1.242";
+  o.rmempty = true;
+  o.depends("enabled", "1");
+
   o = section.option(form.Value, "max_domains", _("Max auto-learned domains"));
   o.default = "500";
   o.depends("enabled", "1");
@@ -471,7 +698,7 @@ function createAutoLearnContent(section) {
       _("Detection log (0)") +
       "</summary>" +
       '<p class="cbi-value-description">' +
-      _("Probe history: direct access, Zapret, failed checks. These domains are not routed through NetShift.") +
+      _("Probe history: direct access, Zapret, failed checks. These domains are not routed through NetShift. Remove or Clear log also drops NetShift-added Zapret excludes.") +
       "</p>" +
       '<div style="margin-bottom:0.5em;">' +
       '<button type="button" class="cbi-button cbi-button-remove" data-action="clear-log">' +
@@ -479,6 +706,30 @@ function createAutoLearnContent(section) {
       "</button>" +
       "</div>" +
       '<div class="ns-auto-learn-domains__log"></div>' +
+      "</details>" +
+      '<details class="ns-auto-learn-zapret" style="margin-top:1em;">' +
+      '<summary class="ns-auto-learn-zapret__summary" style="cursor:pointer;font-weight:600;">' +
+      _("Zapret exclude (NetShift 0 · total 0)") +
+      "</summary>" +
+      '<p class="cbi-value-description">' +
+      _(
+        "Hostnames in zapret-hosts-user-exclude.txt (desync off). Default view: entries added by NetShift auto-learn only (fast). Full list can be large.",
+      ) +
+      "</p>" +
+      '<label style="margin-right:0.5em;">' +
+      _("Show") +
+      ': <select data-zapret-filter="1" class="cbi-input-select">' +
+      '<option value="netshift_auto">' +
+      _("NetShift auto-learn only") +
+      "</option>" +
+      '<option value="manual">' +
+      _("Manual / other (first 200)") +
+      "</option>" +
+      '<option value="all">' +
+      _("All (first 200)") +
+      "</option>" +
+      "</select></label>" +
+      '<div class="ns-auto-learn-domains__zapret"></div>' +
       "</details>" +
       "</div>"
     );

@@ -26,8 +26,9 @@ independent).
 
 ## 2. `netshift/Makefile` (backend)
 
-- `DEPENDS := +sing-box +curl +jq +kmod-nft-tproxy +coreutils-base64
-  +bind-dig`
+- `DEPENDS := +sing-box +curl +jq +kmod-nft-tproxy +kmod-veth
+  +coreutils-base64 +bind-dig` (`kmod-veth` — synthetic LAN client for
+  auto-learn TLS probes via veth netns)
 - `CONFLICTS := https-dns-proxy nextdns luci-app-passwall luci-app-passwall2`
 - Version:
   `PKG_VERSION := $(if $(NETSHIFT_VERSION),$(NETSHIFT_VERSION),0.$(shell date +%d%m%Y))`

@@ -8,6 +8,15 @@
         ],
         "/usr/bin/netshift": [
           "exec"
+        ],
+        "/etc/netshift/auto_learned.json": [
+          "read"
+        ],
+        "/opt/zapret/ipset/zapret-hosts-user-exclude.txt": [
+          "read"
+        ],
+        "/opt/zapret/ipset/zapret-hosts-netshift-auto-exclude.txt": [
+          "read"
         ]
       },
       "ubus": {

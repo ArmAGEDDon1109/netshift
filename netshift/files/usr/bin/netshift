@@ -22,6 +22,7 @@ check_required_file "$NETSHIFT_LIB/logging.sh"
 check_required_file "$NETSHIFT_LIB/rulesets.sh"
 check_required_file "$NETSHIFT_LIB/updater.sh"
 check_required_file "$NETSHIFT_LIB/zapret_adapter.sh"
+check_required_file "$NETSHIFT_LIB/auto_learn_lan_path.sh"
 check_required_file "$NETSHIFT_LIB/auto_learn.sh"
 . /lib/functions.sh
 . /lib/config/uci.sh
@@ -35,6 +36,7 @@ check_required_file "$NETSHIFT_LIB/auto_learn.sh"
 . "$NETSHIFT_LIB/rulesets.sh"
 . "$NETSHIFT_LIB/updater.sh"
 . "$NETSHIFT_LIB/zapret_adapter.sh"
+. "$NETSHIFT_LIB/auto_learn_lan_path.sh"
 . "$NETSHIFT_LIB/auto_learn.sh"
 
 config_load "$NETSHIFT_CONFIG"
@@ -2009,6 +2011,7 @@ start_auto_learn_monitor() {
         return 0
     fi
 
+    auto_learn_ensure_runtime_dir
     if [ ! -f "$AUTO_LEARN_DNS_LOG_TS_FILE" ]; then
         date +%s > "$AUTO_LEARN_DNS_LOG_TS_FILE"
     fi
@@ -2045,6 +2048,7 @@ stop_auto_learn_monitor() {
     fi
 
     _kill_stale_auto_learn_monitors
+    auto_learn_lan_path_teardown
 }
 
 add_cron_job() {
@@ -6163,7 +6167,7 @@ Available commands:
     component_action_async  Start component_action in background; echoes a job_id
                             (use with component_action_status to poll the outcome)
     component_action_status Report an async component action by job_id: <job_id>
-    auto_learn               Auto-learn blocked domains: status|list|probe|add|remove|clear|clear-log|purge-skipped|zapret-status|deploy-zapret
+    auto_learn               Auto-learn: status|list|zapret-excludes|zapret-excludes-count|probe|add|remove|clear|clear-log|purge-skipped|zapret-status|deploy-zapret
 EOF
 }
 

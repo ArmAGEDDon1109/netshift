@@ -152,8 +152,8 @@ msgstr "Менеджер компонентов"
 msgid "Config File Path"
 msgstr "Путь к файлу конфигурации"
 
-msgid "Configuration for NetShift Extended service"
-msgstr "Конфигурация службы NetShift Extended"
+msgid "Configuration for NetShift service"
+msgstr "Конфигурация службы NetShift"
 
 msgid "Configuration Type"
 msgstr "Тип конфигурации"
@@ -671,6 +671,18 @@ msgstr "Ручная проверка"
 msgid "Max auto-learned domains"
 msgstr "Макс. автоопределённых доменов"
 
+msgid "Max TLS probes per tick"
+msgstr "Макс. TLS-проверок за цикл"
+
+msgid "Cap concurrent domain probes per monitor cycle (1–8). Lower values reduce load when auto-learn runs 24/7."
+msgstr "Ограничение числа одновременных проверок доменов за цикл монитора (1–8). Меньшее значение снижает нагрузку при круглосуточной работе."
+
+msgid "Monitor interval (sec)"
+msgstr "Интервал монитора (сек)"
+
+msgid "How often the background monitor reads DNS logs. 30s or more is easier on CPU and flash for 24/7 use."
+msgstr "Как часто фоновый монитор читает DNS-журнал. 30 с и больше — меньше нагрузка на CPU и flash при работе 24/7."
+
 msgid "Memory Usage"
 msgstr "Использование памяти"
 
@@ -689,11 +701,8 @@ msgstr "Должно быть числом от 50 до 1000"
 msgid "NetShift"
 msgstr "NetShift"
 
-msgid "NetShift Extended"
-msgstr "NetShift Extended"
-
-msgid "NetShift Extended Settings"
-msgstr "Настройки NetShift Extended"
+msgid "NetShift Settings"
+msgstr "Настройки NetShift"
 
 msgid "NetShift updated, version:"
 msgstr "NetShift обновлён, версия:"
@@ -1210,6 +1219,51 @@ msgstr "Zapret установлен, API 90-script отсутствует"
 
 msgid "Zapret not detected"
 msgstr "Zapret не обнаружен"
+
+msgid "Zapret exclude (NetShift %d · total %d)"
+msgstr "Zapret exclude (NetShift %d · всего %d)"
+
+msgid "NetShift auto-learn only"
+msgstr "Только auto-learn NetShift"
+
+msgid "Manual / other (first 200)"
+msgstr "Вручную / прочие (первые 200)"
+
+msgid "All (first 200)"
+msgstr "Все (первые 200)"
+
+msgid "Show"
+msgstr "Показать"
+
+msgid "Showing %d of %d entries."
+msgstr "Показано %d из %d."
+
+msgid "No domains in this Zapret exclude view."
+msgstr "Нет доменов в этом представлении exclude."
+
+msgid "Zapret exclude list (%d)"
+msgstr "Список Zapret exclude (%d)"
+
+msgid "Active hostnames in zapret-hosts-user-exclude.txt (desync off). Source shows whether NetShift auto-learn added the entry."
+msgstr "Активные имена в zapret-hosts-user-exclude.txt (desync выкл.). Колонка «Источник» — добавил ли домен auto-learn NetShift."
+
+msgid "No domains in Zapret exclude list."
+msgstr "В списке Zapret exclude нет доменов."
+
+msgid "Source"
+msgstr "Источник"
+
+msgid "Auto-learn"
+msgstr "Auto-learn"
+
+msgid "Manual / other"
+msgstr "Вручную / другое"
+
+msgid "LAN probe client IP"
+msgstr "IP синтетического LAN-клиента для проб"
+
+msgid "Synthetic LAN client for TLS probes (veth + network namespace on the router). Must be a free address in the LAN subnet, outside the DHCP pool (default 192.168.1.242). Requires kmod-veth."
+msgstr "Синтетический LAN-клиент для TLS-проб (veth + network namespace на роутере). Свободный адрес в подсети LAN, вне пула DHCP (по умолчанию 192.168.1.242). Нужен kmod-veth (зависимость пакета netshift)."
 
 msgid "Zapret re-probe delay (sec)"
 msgstr "Задержка повторной проверки Zapret (сек)"

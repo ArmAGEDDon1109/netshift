@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netshift
 
-PKG_VERSION := $(if $(NETSHIFT_VERSION),$(NETSHIFT_VERSION),0.9.11)
+PKG_VERSION := $(if $(NETSHIFT_VERSION),$(NETSHIFT_VERSION),0.9.9)
 
 PKG_RELEASE:=1
 
@@ -14,7 +14,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/netshift
 	SECTION:=net
 	CATEGORY:=Network
-	DEPENDS:=+sing-box +curl +jq +kmod-nft-tproxy +coreutils-base64 +bind-dig
+	DEPENDS:=+sing-box +curl +jq +kmod-nft-tproxy +kmod-veth +coreutils-base64 +bind-dig
 	CONFLICTS:=https-dns-proxy nextdns luci-app-passwall luci-app-passwall2
 	TITLE:=Domain routing app
 	URL:=https://podkop.net
@@ -22,7 +22,8 @@ define Package/netshift
 endef
 
 define Package/netshift/description
-	Domain routing. Use of VLESS, Shadowsocks technologies
+	Domain routing (VLESS, Shadowsocks, …). Auto-learn TLS probes use a
+	synthetic LAN client (veth + netns); requires kmod-veth (listed in DEPENDS).
 endef
 
 define Build/Configure

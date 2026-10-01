@@ -143,3 +143,8 @@ config auto_learn 'auto_learn'
 	option zapret_enabled '1'
 	option zapret_probe_delay '30'
 	option max_domains '500'
+	# 24/7-friendly: fewer probes and less flash wear (DNS cursors live in /var/run).
+	option monitor_interval '30'
+	option max_probes_per_tick '2'
+	# Synthetic LAN client IP for auto-learn TLS (veth netns); keep outside DHCP pool.
+	# option probe_lan_ip '192.168.1.242'

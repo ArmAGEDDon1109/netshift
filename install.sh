@@ -70,6 +70,32 @@ pkg_install() {
     fi
 }
 
+pkg_install_named() {
+    local pkg_name="$1"
+
+    if [ "$PKG_IS_APK" -eq 1 ]; then
+        apk add "$pkg_name"
+    else
+        opkg install "$pkg_name"
+    fi
+}
+
+# kmod-veth is in netshift DEPENDS; this covers manual ipk install without deps.
+ensure_netshift_kernel_modules() {
+    if pkg_is_installed kmod-veth; then
+        return 0
+    fi
+    msg "kmod-veth is required for auto-learn LAN TLS probes (veth netns)."
+    msg "Installing kmod-veth from the system feed..."
+    pkg_list_update
+    if pkg_install_named kmod-veth; then
+        msg "kmod-veth installed."
+        return 0
+    fi
+    msg "Warning: could not install kmod-veth. Run: opkg install kmod-veth (or apk add kmod-veth)"
+    return 1
+}
+
 update_config() {
     printf "\033[48;5;196m\033[1m╔══════════════════════════════════════════════════════════════════════╗\033[0m\n"
     printf "\033[48;5;196m\033[1m║ ! Обнаружена старая версия NetShift.                                 ║\033[0m\n"
@@ -539,6 +565,7 @@ main() {
     fi
 
     apply_sing_box_core
+    ensure_netshift_kernel_modules
 
     find "$DOWNLOAD_DIR" -type f -name '*netshift*' -exec rm {} \;
 }

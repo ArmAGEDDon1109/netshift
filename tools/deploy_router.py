@@ -27,6 +27,7 @@ FILES = [
     (r"netshift\files\usr\lib\updater.sh", "/usr/lib/netshift/updater.sh"),
     (r"netshift\files\usr\lib\zapret_adapter.sh", "/usr/lib/netshift/zapret_adapter.sh"),
     (r"netshift\files\usr\lib\auto_learn.sh", "/usr/lib/netshift/auto_learn.sh"),
+    (r"netshift\files\usr\lib\auto_learn_lan_path.sh", "/usr/lib/netshift/auto_learn_lan_path.sh"),
     (r"netshift\files\usr\lib\zapret\90-script.sh", "/usr/lib/netshift/zapret/90-script.sh"),
     (r"netshift\files\usr\lib\zapret\90-script.sh", "/opt/zapret/init.d/openwrt/custom.d/90-script.sh"),
     # LuCI
@@ -89,7 +90,8 @@ if no_restart:
         "for p in $(pgrep -f '/usr/bin/netshift __auto_learn_monitor' 2>/dev/null); do kill $p 2>/dev/null; done; "
         "rm -f /var/run/netshift_auto_learn_monitor.pid; "
         "setsid /bin/sh -c 'exec /usr/bin/netshift __auto_learn_monitor' </dev/null >/dev/null 2>&1 & "
-        "rm -f /tmp/luci-indexcache*"
+        "rm -f /tmp/luci-indexcache* /tmp/luci-modulecache/*; "
+        "rm -f /www/luci-static/resources/view/netshift/*.js.gz; true"
     )
 else:
     post_cmd = (
@@ -98,7 +100,8 @@ else:
         "/usr/lib/netshift/zapret/90-script.sh && "
         "/etc/init.d/netshift enable && "
         "/etc/init.d/netshift restart && "
-        "rm -f /tmp/luci-indexcache*"
+        "rm -f /tmp/luci-indexcache* /tmp/luci-modulecache/* "
+        "/www/luci-static/resources/view/netshift/*.js.gz"
     )
 
 subprocess.run(["ssh", "root@192.168.1.1", post_cmd], check=True)
