@@ -129,9 +129,21 @@ jobs:
             ls -la "./bin/${{ matrix.package_type }}/" || true
             exit 1
           fi
-          cp "${i18n[0]}" "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${ext}"
-          cp ./bin/${{ matrix.package_type }}/netshift-*."${ext}" ./filtered-bin/${{ matrix.package_type }}/
-          cp ./bin/${{ matrix.package_type }}/luci-app-netshift-*."${ext}" ./filtered-bin/${{ matrix.package_type }}/
+          for f in "${i18n[@]}"; do
+            case "$(basename "$f")" in
+              *"${VERSION}"*) cp "$f" "./filtered-bin/${{ matrix.package_type }}/luci-i18n-netshift-ru-${VERSION}.${ext}"; break ;;
+            esac
+          done
+          shopt -s nullglob
+          netshift_pkgs=(./bin/${{ matrix.package_type }}/netshift-"${VERSION}"-*."${ext}")
+          luci_pkgs=(./bin/${{ matrix.package_type }}/luci-app-netshift-"${VERSION}"-*."${ext}")
+          if [ ${#netshift_pkgs[@]} -eq 0 ] || [ ${#luci_pkgs[@]} -eq 0 ]; then
+            echo "Versioned packages for ${VERSION} not found in ./bin/${{ matrix.package_type }}/"
+            ls -la "./bin/${{ matrix.package_type }}/" || true
+            exit 1
+          fi
+          cp "${netshift_pkgs[@]}" ./filtered-bin/${{ matrix.package_type }}/
+          cp "${luci_pkgs[@]}" ./filtered-bin/${{ matrix.package_type }}/
 
       - name: Remove Docker container
         run: docker rm ${{ matrix.package_type }}-${{ matrix.openwrt_version }}
