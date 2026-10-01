@@ -10,10 +10,6 @@ ENV NETSHIFT_VERSION=${NETSHIFT_VERSION}
 COPY ./netshift /builder/package/feeds/utilities/netshift
 COPY ./luci-app-netshift /builder/package/feeds/luci/luci-app-netshift
 
-# Rebuild .lmo from committed po/ru before package compile (po2lmo from luci-base host).
-RUN cd /builder/package/feeds/luci/luci-app-netshift && \
-    /builder/staging_dir/hostpkg/bin/po2lmo po/ru/netshift.po po/ru/netshift.ru.lmo
-
 # Both packages are arch-independent (PKGARCH:=all) and compile nothing, so
 # NO_DEPS=1 skips building their dependency trees (kernel modules, sing-box, ...).
 RUN make package/luci-i18n-netshift-ru/clean V=s 2>/dev/null || true && \
