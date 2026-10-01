@@ -148,3 +148,6 @@ config auto_learn 'auto_learn'
 	option max_probes_per_tick '2'
 	# Synthetic LAN client IP for auto-learn TLS (veth netns); keep outside DHCP pool.
 	# option probe_lan_ip '192.168.1.242'
+	# DNS for TLS probes in the synthetic client: dhcp (from dnsmasq), gateway, or custom.
+	option probe_dns_mode 'dhcp'
+	# option probe_dns_servers '1.1.1.1 8.8.8.8'

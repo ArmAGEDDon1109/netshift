@@ -7546,6 +7546,8 @@ config_get() {
                 max_domains) eval "$1=\"\${AL_MAX:-500}\"" ;;
                 zapret_probe_delay) eval "$1=\"\${AL_ZAPRET_DELAY:-30}\"" ;;
                 probe_lan_ip) eval "$1=\"\${AL_PROBE_LAN_IP:-}\"" ;;
+                probe_dns_mode) eval "$1=\"\${AL_PROBE_DNS_MODE:-dhcp}\"" ;;
+                probe_dns_servers) eval "$1=\"\${AL_PROBE_DNS_SERVERS:-}\"" ;;
                 *) eval "$1=\"\${4:-}\"" ;;
             esac
             ;;

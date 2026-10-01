@@ -649,6 +649,31 @@ function createAutoLearnContent(section) {
   o.rmempty = true;
   o.depends("enabled", "1");
 
+  o = section.option(
+    form.ListValue,
+    "probe_dns_mode",
+    _("Probe DNS source"),
+    _(
+      "DNS used by the synthetic LAN client for TLS probes. DHCP (default) requests DNS from dnsmasq like a real PC. Reserve probe_lan_ip in DHCP or use a static lease so dnsmasq answers the veth client.",
+    ),
+  );
+  o.value("dhcp", _("DHCP (from LAN dnsmasq)"));
+  o.value("gateway", _("Router LAN IP (gateway)"));
+  o.value("custom", _("Custom servers"));
+  o.default = "dhcp";
+  o.depends("enabled", "1");
+
+  o = section.option(
+    form.Value,
+    "probe_dns_servers",
+    _("Custom probe DNS servers"),
+    _("Space-separated IPv4 addresses when Probe DNS source is Custom."),
+  );
+  o.placeholder = "1.1.1.1 8.8.8.8";
+  o.rmempty = true;
+  o.depends("enabled", "1");
+  o.depends("probe_dns_mode", "custom");
+
   o = section.option(form.Value, "max_domains", _("Max auto-learned domains"));
   o.default = "500";
   o.depends("enabled", "1");

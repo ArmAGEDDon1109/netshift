@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netshift
 
-PKG_VERSION := $(if $(NETSHIFT_VERSION),$(NETSHIFT_VERSION),0.9.16)
+PKG_VERSION := $(if $(NETSHIFT_VERSION),$(NETSHIFT_VERSION),0.9.9)
 
 PKG_RELEASE:=1
 
@@ -58,6 +58,7 @@ define Package/netshift/install
 
 	$(INSTALL_DIR) $(1)/usr/lib/netshift
 	$(CP) ./files/usr/lib/* $(1)/usr/lib/netshift/
+	$(INSTALL_BIN) ./files/usr/lib/auto_learn_udhcpc.sh $(1)/usr/lib/netshift/auto_learn_udhcpc.sh
 
 	sed -i -e 's/__COMPILED_VERSION_VARIABLE__/$(PKG_VERSION)/g' $(1)/usr/lib/netshift/constants.sh
 endef

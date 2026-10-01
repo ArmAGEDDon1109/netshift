@@ -1285,3 +1285,24 @@ msgstr "Интеграция с Zapret активна"
 
 msgid "Zapret status"
 msgstr "Статус Zapret"
+
+msgid "Probe DNS source"
+msgstr "Источник DNS для проб"
+
+msgid "DNS used by the synthetic LAN client for TLS probes. DHCP (default) requests DNS from dnsmasq like a real PC. Reserve probe_lan_ip in DHCP or use a static lease so dnsmasq answers the veth client."
+msgstr "DNS синтетического LAN-клиента для TLS-проб. По умолчанию DHCP — как у ПК, серверы DNS от dnsmasq. Зарезервируйте probe_lan_ip в DHCP (статическая аренда), чтобы dnsmasq отвечал veth-клиенту."
+
+msgid "DHCP (from LAN dnsmasq)"
+msgstr "DHCP (dnsmasq на LAN)"
+
+msgid "Router LAN IP (gateway)"
+msgstr "IP роутера на LAN (шлюз)"
+
+msgid "Custom servers"
+msgstr "Свои серверы"
+
+msgid "Custom probe DNS servers"
+msgstr "Свои DNS для проб"
+
+msgid "Space-separated IPv4 addresses when Probe DNS source is Custom."
+msgstr "IPv4 через пробел, если выбран источник «Свои серверы»."

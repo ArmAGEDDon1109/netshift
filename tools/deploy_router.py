@@ -30,6 +30,7 @@ FILES = [
     (r"netshift\files\usr\lib\zapret_adapter.sh", "/usr/lib/netshift/zapret_adapter.sh"),
     (r"netshift\files\usr\lib\auto_learn.sh", "/usr/lib/netshift/auto_learn.sh"),
     (r"netshift\files\usr\lib\auto_learn_lan_path.sh", "/usr/lib/netshift/auto_learn_lan_path.sh"),
+    (r"netshift\files\usr\lib\auto_learn_udhcpc.sh", "/usr/lib/netshift/auto_learn_udhcpc.sh"),
     (r"netshift\files\usr\lib\zapret\90-script.sh", "/usr/lib/netshift/zapret/90-script.sh"),
     (r"netshift\files\usr\lib\zapret\90-script.sh", "/opt/zapret/init.d/openwrt/custom.d/90-script.sh"),
     # LuCI

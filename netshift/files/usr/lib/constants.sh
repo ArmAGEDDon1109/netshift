@@ -295,6 +295,7 @@ AUTO_LEARN_PROBE_NETNS="netshift-probe"
 AUTO_LEARN_PROBE_VETH_HOST="nsp-host"
 AUTO_LEARN_PROBE_VETH_LAN="nsp-lan"
 AUTO_LEARN_PROBE_LAN_IP_DEFAULT="192.168.1.242"
+AUTO_LEARN_UDHCPC_SCRIPT="/usr/lib/netshift/auto_learn_udhcpc.sh"
 AUTO_LEARN_LAN_PATH_READY_FILE="/var/run/netshift_lan_probe_ready"
 AUTO_LEARN_SKIP_DOMAIN_SUFFIXES="ru lan local localdomain home internal private invalid test localhost home.arpa intranet corp ntp.org pool.ntp.org"
 
